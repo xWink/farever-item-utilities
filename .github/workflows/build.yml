@@ -1,0 +1,47 @@
+name: Build mod
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Haxe
+        uses: krdlab/setup-haxe@v1
+        with:
+          haxe-version: 4.3.7
+
+      - name: Configure haxelib
+        run: |
+          mkdir -p "$HOME/haxelib"
+          haxelib setup "$HOME/haxelib"
+
+      - name: Install HLX dependencies
+        run: |
+          haxelib git hlx-runtime https://github.com/hlx-framework/hlx-core.git main hlx-runtime/src
+          haxelib git hl-imgui https://github.com/laymain/farever-mods.git main imgui/hl-imgui/src
+
+      - name: Compile
+        run: haxe compile.hxml
+
+      - name: Package
+        run: |
+          mkdir -p package/hlx/mods/item-utilities
+          cp build/item-utilities/item-utilities.hl package/hlx/mods/item-utilities/
+          printf "Requires HLX Core and the Farever ImGui plugin.\nInstall with Vortex, or extract the archive into the Farever game folder.\n" > package/hlx/mods/item-utilities/README.txt
+          cd package
+          zip -r ../farever-item-utilities.zip hlx
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: farever-item-utilities
+          path: farever-item-utilities.zip
+
