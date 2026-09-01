@@ -1,0 +1,8 @@
+-lib hlx-runtime
+-lib hl-imgui
+-D hl-ver=1.16.0
+-cp src
+-main itemutilities.ItemUtilitiesMod
+-dce full
+-hl build/item-utilities/item-utilities.hl
+
