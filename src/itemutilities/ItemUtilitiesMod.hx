@@ -124,6 +124,7 @@ class ItemUtilitiesMod {
                 openInventoryWindows.push({ window: instance, inventory: inventory });
 
             selectSourceInventory();
+            selectPlayerInventoryComp();
         } catch (_:Dynamic) {}
     }
 
@@ -682,6 +683,18 @@ class ItemUtilitiesMod {
         playerInventoryComp = null;
         if (sourceInventory == null)
             return;
+
+        // InventoryWindow.init creates and assigns its `comp` before this
+        // mod's postfix runs. Prefer that direct reference: InventoryComp.init
+        // is not reliably dispatched by every HLX/Farever build.
+        if (activeInventoryWindow != null) {
+            var directComp = fieldOrNull(activeInventoryWindow, "comp");
+            if (directComp != null && fieldOrNull(directComp, "inventory") == sourceInventory) {
+                playerInventoryComp = directComp;
+                return;
+            }
+        }
+
         for (comp in inventoryComps) {
             if (fieldOrNull(comp, "inventory") == sourceInventory) {
                 playerInventoryComp = comp;
