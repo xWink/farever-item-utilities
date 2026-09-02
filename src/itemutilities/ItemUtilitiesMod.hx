@@ -15,6 +15,7 @@ class ItemUtilitiesMod {
     static var enabled = new BoolRef(true);
     static var showDepositMaterials = new BoolRef(true);
     static var settingsOpen = new BoolRef(true);
+    static var bankPanelOpen = new BoolRef(true);
     static var hasSeenMenu:Bool = false;
 
     static var hotkeyKey:Int = ImGuiKey.F9;
@@ -63,10 +64,10 @@ class ItemUtilitiesMod {
     static function afterBankInit(instance:Dynamic, result:Void):Void {
         activeBankWindow = instance;
         depositButton = null;
+        bankPanelOpen.set(true);
         status = "";
         cancelDeposit();
         refreshInventories();
-        installDepositButton();
     }
 
     @:hlx.postfix(ui.win.TitleWindow.onRemove)
@@ -86,6 +87,9 @@ class ItemUtilitiesMod {
 
         if (settingsOpen.get())
             drawSettings();
+
+        if (activeBankWindow != null && enabled.get() && showDepositMaterials.get())
+            drawBankUtilities();
 
     }
 
@@ -127,6 +131,29 @@ class ItemUtilitiesMod {
             ImGui.text("Hold Ctrl/Shift/Alt/Win, then press a key. Esc cancels.");
             captureNextHotkey();
         }
+
+        ImGui.end();
+    }
+
+    static function drawBankUtilities():Void {
+        if (!bankPanelOpen.get())
+            return;
+
+        ImGui.setNextWindowBgAlpha(0.98);
+        if (!ImGui.begin("Bank Utilities##item-utilities-bank", bankPanelOpen)) {
+            ImGui.end();
+            return;
+        }
+
+        if (!depositing) {
+            if (ImGui.button("Deposit Crafting Materials"))
+                beginDeposit();
+        } else {
+            ImGui.text("Depositing crafting materials...");
+        }
+
+        if (status.length > 0)
+            ImGui.text(status);
 
         ImGui.end();
     }
