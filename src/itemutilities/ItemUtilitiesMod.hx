@@ -186,13 +186,23 @@ class ItemUtilitiesMod {
         } catch (error:Dynamic) logLockError("slot registration", error);
     }
 
-    @:hlx.prefix(ui.win.InventorySlot.defaultTransferAction)
-    static function lockEditTransfer(instance:Dynamic, destination:Dynamic):HlxPrefixControl
-        return handleLockEditClick(instance) ? Skip : Continue;
+    // Farever evaluates InventorySlot.defaultTransferAction/defaultEquipAction
+    // while merely hovering an item. Lock editing therefore belongs on the
+    // actual primary-click dispatcher, not either of those action selectors.
+    @:hlx.prefix(ui.UIElement.click)
+    static function lockEditPrimaryClick(instance:Dynamic):HlxPrefixControl {
+        if (!enabled.get() || !lockEditMode)
+            return Continue;
+        var slot = findInventorySlotForElement(instance);
+        return slot != null && handleLockEditClick(slot) ? Skip : Continue;
+    }
 
-    @:hlx.prefix(ui.win.InventorySlot.defaultEquipAction)
-    static function lockEditEquip(instance:Dynamic, inventories:Dynamic):HlxPrefixControl
-        return handleLockEditClick(instance) ? Skip : Continue;
+    // A world discard is represented as a default transfer with no destination.
+    // Keep ordinary inventory/bank/equipment transfers available for locked
+    // items, but refuse the destination-less discard action.
+    @:hlx.prefix(ui.win.InventorySlot.defaultTransferAction)
+    static function protectLockedDefaultTransfer(instance:Dynamic, destination:Dynamic):HlxPrefixControl
+        return destination == null && isLockedInventorySlot(instance) ? Skip : Continue;
 
     @:hlx.prefix(st.Loadout.canSellItem)
     static function protectLockedSale(instance:Dynamic, item:Dynamic):HlxPrefixResult<Bool>
@@ -672,6 +682,39 @@ class ItemUtilitiesMod {
         ImGui.ImDrawList_AddLine(drawList,
             new ImVec2(min.x + 21, min.y + 10),
             new ImVec2(min.x + 21, min.y + 13), color, 2.0);
+    }
+
+    static function findInventorySlotForElement(element:Dynamic):Dynamic {
+        if (element == null)
+            return null;
+        for (entry in latestSlots) {
+            if (entry == null || entry.slot == null)
+                continue;
+            if (entry.slot == element)
+                return entry.slot;
+            try {
+                if (HlxRuntime.resolveField(entry.slot, "innerSlot") == element)
+                    return entry.slot;
+            } catch (_:Dynamic) {}
+        }
+        return null;
+    }
+
+    static function isLockedInventorySlot(slot:Dynamic):Bool {
+        if (slot == null)
+            return false;
+        try {
+            var inventory:Dynamic = HlxRuntime.resolveField(slot, "inventory");
+            var index:Int = cast HlxRuntime.resolveField(slot, "index");
+            if (inventory == null || index < 0)
+                return false;
+            var stack = arrayGet(getContent(inventory), index);
+            var item:Dynamic = stack == null ? null : fieldOrNull(stack, "item");
+            return isRuntimeLocked(item);
+        } catch (error:Dynamic) {
+            logLockError("slot lock lookup", error);
+            return false;
+        }
     }
 
     static function handleLockEditClick(slot:Dynamic):Bool {
