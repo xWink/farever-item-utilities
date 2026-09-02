@@ -826,18 +826,23 @@ class ItemUtilitiesMod {
             if (recordString(lockRecords[index], "uid") == uid) {
                 lockRecords.splice(index, 1);
                 syncAllSlotLocks();
+                saveConfig();
                 return;
             }
         }
         var current:Map<String, Dynamic> = new Map();
         collectTrackedItems(current);
+        var tracked = current.get(uid);
         lockRecords.push({
             uid: uid,
             fingerprint: fingerprint,
             missing: 0,
-            known: matchingUids(current, fingerprint)
+            known: matchingUids(current, fingerprint),
+            location: tracked == null ? null : tracked.location,
+            index: tracked == null ? -1 : tracked.index
         });
         syncAllSlotLocks();
+        saveConfig();
     }
 
     static function isItemLocked(item:Dynamic):Bool {
@@ -857,14 +862,16 @@ class ItemUtilitiesMod {
         collectTrackedItems(current);
         if (!lockScanInitialized) {
             lockScanInitialized = true;
-            return;
         }
 
+        var changed = false;
         var claimed:Map<String, Bool> = new Map();
         for (record in lockRecords) {
             var uid = recordString(record, "uid");
             if (uid != null && current.exists(uid)) {
+                var exact = current.get(uid);
                 record.missing = 0;
+                if (updateRecordLocation(record, exact)) changed = true;
                 claimed.set(uid, true);
             }
         }
@@ -891,22 +898,49 @@ class ItemUtilitiesMod {
                 candidates.push(candidate);
             }
 
-            if (candidates.length == 1) {
-                record.uid = candidates[0].uid;
+            var replacement:Dynamic = null;
+            var savedLocation = recordString(record, "location");
+            var savedIndex = recordInt(record, "index", -1);
+            if (savedLocation != null && savedIndex >= 0) {
+                for (candidate in candidates) {
+                    if (candidate.location == savedLocation && candidate.index == savedIndex) {
+                        replacement = candidate;
+                        break;
+                    }
+                }
+            }
+            if (replacement == null && candidates.length == 1)
+                replacement = candidates[0];
+
+            if (replacement != null) {
+                record.uid = replacement.uid;
                 record.missing = 0;
                 record.known = matchingUids(current, fingerprint);
-                claimed.set(candidates[0].uid, true);
+                updateRecordLocation(record, replacement);
+                claimed.set(replacement.uid, true);
                 kept.push(record);
+                changed = true;
             } else {
                 var missing = recordInt(record, "missing", 0) + 1;
                 record.missing = missing;
-                if (missing <= LOCK_MISSING_FRAME_LIMIT)
-                    kept.push(record);
-                else
-                    logLockError("identity migration", "locked item disappeared without one unambiguous replacement");
+                // A bank/equipment container may not be materialized yet. Keep
+                // unresolved persisted records rather than guessing or losing
+                // them; a later scan can still restore the exact item.
+                kept.push(record);
             }
         }
         lockRecords = kept;
+        if (changed) saveConfig();
+    }
+
+    static function updateRecordLocation(record:Dynamic, tracked:Dynamic):Bool {
+        if (record == null || tracked == null)
+            return false;
+        var oldLocation = recordString(record, "location");
+        var oldIndex = recordInt(record, "index", -1);
+        record.location = tracked.location;
+        record.index = tracked.index;
+        return oldLocation != tracked.location || oldIndex != tracked.index;
     }
 
     static function matchingUids(items:Map<String, Dynamic>, fingerprint:String):Array<String> {
@@ -930,32 +964,38 @@ class ItemUtilitiesMod {
 
     static function collectTrackedItems(result:Map<String, Dynamic>):Void {
         var inventories:Array<Dynamic> = [];
-        addInventory(inventories, sourceInventory);
-        addInventory(inventories, bankInventory);
+        addTrackedInventory(inventories, sourceInventory, "inventory");
+        addTrackedInventory(inventories, bankInventory, "bank");
 
         var hero = resolveHero();
         var loadout = fieldOrNull(hero, "loadout");
         if (loadout != null) {
-            addInventory(inventories, fieldOrNull(loadout, "inventory"));
-            addInventory(inventories, fieldOrNull(loadout, "equipment"));
-            addInventory(inventories, fieldOrNull(loadout, "bank"));
+            addTrackedInventory(inventories, fieldOrNull(loadout, "inventory"), "inventory");
+            addTrackedInventory(inventories, fieldOrNull(loadout, "equipment"), "equipment");
+            addTrackedInventory(inventories, fieldOrNull(loadout, "bank"), "bank");
         }
 
-        for (inventory in inventories) {
+        for (entry in inventories) {
+            var inventory = entry.inventory;
             var content = getContent(inventory);
             for (index in 0...arrayLength(content)) {
                 var item = itemAt(inventory, index);
                 var uid = itemUid(item);
                 var fingerprint = itemFingerprint(item);
                 if (uid != null && fingerprint != null)
-                    result.set(uid, { uid: uid, fingerprint: fingerprint, inventory: inventory, index: index });
+                    result.set(uid, { uid: uid, fingerprint: fingerprint, inventory: inventory,
+                        location: entry.location, index: index });
             }
         }
     }
 
-    static function addInventory(inventories:Array<Dynamic>, inventory:Dynamic):Void {
-        if (inventory != null && inventories.indexOf(inventory) < 0)
-            inventories.push(inventory);
+    static function addTrackedInventory(inventories:Array<Dynamic>, inventory:Dynamic,
+        location:String):Void {
+        if (inventory == null)
+            return;
+        for (entry in inventories)
+            if (entry.inventory == inventory) return;
+        inventories.push({ inventory: inventory, location: location });
     }
 
     static function resolveHero():Dynamic {
@@ -1321,10 +1361,38 @@ class ItemUtilitiesMod {
             if (Reflect.hasField(data, "hotkeySuper")) hotkeySuper = Reflect.field(data, "hotkeySuper");
             if (Reflect.hasField(data, "hasSeenMenu")) hasSeenMenu = Reflect.field(data, "hasSeenMenu");
             else hasSeenMenu = true;
+            if (Reflect.hasField(data, "lockedItems")) {
+                var saved:Array<Dynamic> = cast Reflect.field(data, "lockedItems");
+                if (saved != null) {
+                    for (record in saved) {
+                        var uid = recordString(record, "uid");
+                        var fingerprint = recordString(record, "fingerprint");
+                        if (uid != null && fingerprint != null) {
+                            lockRecords.push({
+                                uid: uid,
+                                fingerprint: fingerprint,
+                                missing: 0,
+                                known: [],
+                                location: recordString(record, "location"),
+                                index: recordInt(record, "index", -1)
+                            });
+                        }
+                    }
+                }
+            }
         } catch (_:Dynamic) {}
     }
 
     static function saveConfig():Void {
+        var savedLocks:Array<Dynamic> = [];
+        for (record in lockRecords) {
+            savedLocks.push({
+                uid: recordString(record, "uid"),
+                fingerprint: recordString(record, "fingerprint"),
+                location: recordString(record, "location"),
+                index: recordInt(record, "index", -1)
+            });
+        }
         try File.saveContent(CONFIG_PATH, Json.stringify({
             enabled: enabled.get(),
             showDepositMaterials: showDepositMaterials.get(),
@@ -1333,7 +1401,8 @@ class ItemUtilitiesMod {
             hotkeyShift: hotkeyShift,
             hotkeyAlt: hotkeyAlt,
             hotkeySuper: hotkeySuper,
-            hasSeenMenu: hasSeenMenu
+            hasSeenMenu: hasSeenMenu,
+            lockedItems: savedLocks
         }, null, "  ")) catch (_:Dynamic) {}
     }
 }
