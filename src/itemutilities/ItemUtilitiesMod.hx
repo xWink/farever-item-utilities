@@ -68,8 +68,7 @@ class ItemUtilitiesMod {
     static var playerInventoryComp:Dynamic;
     static var itemLockEditMode:Bool = false;
     static var lockedItemUids:Map<String, Bool> = new Map();
-    static var inventorySlotType:hl.Bytes;
-    static var setSlotLockedMember:hlx.runtime.ResolvedMember;
+    static var inventorySlots:Array<Dynamic> = [];
     static var createNewMember:hlx.runtime.ResolvedMember;
     static var getParentPropertiesMember:hlx.runtime.ResolvedMember;
     static var setOnClickMember:hlx.runtime.ResolvedMember;
@@ -127,12 +126,10 @@ class ItemUtilitiesMod {
     }
 
     @:hlx.postfix(ui.win.InventorySlot.init)
-    static function afterInventorySlotInit(instance:Dynamic, result:Void):Void
-        syncSlotLock(instance);
-
-    @:hlx.postfix(ui.win.InventorySlot.checkItemChanged)
-    static function afterInventorySlotChanged(instance:Dynamic, force:Dynamic, result:Bool):Void
-        syncSlotLock(instance);
+    static function afterInventorySlotInit(instance:Dynamic, result:Void):Void {
+        if (inventorySlots.indexOf(instance) < 0)
+            inventorySlots.push(instance);
+    }
 
     @:hlx.prefix(ui.win.InventorySlot.defaultTransferAction)
     static function beforeDefaultTransfer(instance:Dynamic, destination:Dynamic):HlxPrefixControl {
@@ -193,6 +190,8 @@ class ItemUtilitiesMod {
             drawBankHeaderButton();
         if (enabled.get())
             drawItemLockButton();
+        if (enabled.get())
+            drawLockedItemBadges();
 
     }
 
@@ -633,7 +632,6 @@ class ItemUtilitiesMod {
             if (uid == null)
                 return true;
             if (lockedItemUids.exists(uid)) lockedItemUids.remove(uid); else lockedItemUids.set(uid, true);
-            syncSlotLock(slot);
             saveConfig();
             return true;
         } catch (error:Dynamic) {
@@ -656,19 +654,35 @@ class ItemUtilitiesMod {
         return uid != null && lockedItemUids.exists(uid);
     }
 
-    static function syncSlotLock(slot:Dynamic):Void {
-        try {
-            var item:Dynamic = HlxRuntime.resolveField(slot, "item");
-            if (inventorySlotType == null)
-                inventorySlotType = HlxRuntime.resolveType("ui.win.InventorySlot");
-            if (inventorySlotType == null)
-                return;
-            if (setSlotLockedMember == null)
-                setSlotLockedMember = HlxRuntime.resolveMember(inventorySlotType, "set_locked");
-            if (setSlotLockedMember != null)
-                HlxRuntime.callResolved(setSlotLockedMember, [slot, isItemLocked(item)]);
-        } catch (error:Dynamic) {
-            trace("[ItemUtilities] lock indicator failed: " + Std.string(error));
+    static function drawLockedItemBadges():Void {
+        var dl = ImGui.getForegroundDrawList();
+        var bg = ImGui.colorConvertFloat4ToU32(new ImVec4(0.25, 0.22, 0.20, 0.94));
+        var fg = ImGui.colorConvertFloat4ToU32(new ImVec4(0.96, 0.84, 0.57, 1));
+        for (slot in inventorySlots) {
+            try {
+                var item:Dynamic = HlxRuntime.resolveField(slot, "item");
+                if (!isItemLocked(item))
+                    continue;
+                var inner:Dynamic = HlxRuntime.resolveField(slot, "innerSlot");
+                if (inner == null || HlxRuntime.resolveField(inner, "visible") == false)
+                    continue;
+                var x:Float = cast HlxRuntime.resolveField(inner, "absX");
+                var y:Float = cast HlxRuntime.resolveField(inner, "absY");
+                var left = x + 38;
+                var top = y + 3;
+                ImGui.ImDrawList_AddRectFilled(dl, new ImVec2(left, top + 5),
+                    new ImVec2(left + 13, top + 15), bg, 3.0, 0);
+                ImGui.ImDrawList_AddLine(dl, new ImVec2(left + 3, top + 6),
+                    new ImVec2(left + 3, top + 3), fg, 1.5);
+                ImGui.ImDrawList_AddLine(dl, new ImVec2(left + 3, top + 3),
+                    new ImVec2(left + 6, top + 1), fg, 1.5);
+                ImGui.ImDrawList_AddLine(dl, new ImVec2(left + 6, top + 1),
+                    new ImVec2(left + 10, top + 3), fg, 1.5);
+                ImGui.ImDrawList_AddLine(dl, new ImVec2(left + 10, top + 3),
+                    new ImVec2(left + 10, top + 6), fg, 1.5);
+                ImGui.ImDrawList_AddRect(dl, new ImVec2(left + 2, top + 6),
+                    new ImVec2(left + 11, top + 14), fg, 2.0, 1.5, 0);
+            } catch (_:Dynamic) {}
         }
     }
 
