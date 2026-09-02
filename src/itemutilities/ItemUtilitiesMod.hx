@@ -335,7 +335,7 @@ class ItemUtilitiesMod {
         var dl = ImGui.getWindowDrawList();
         var col = ImGui.colorConvertFloat4ToU32(new ImVec4(0.94, 0.89, 0.83, 1));
         ImGui.ImDrawList_AddRect(dl, new ImVec2(min.x + 9, min.y + 13),
-            new ImVec2(min.x + 23, min.y + 24), col, 2.0, 0, 2.0);
+            new ImVec2(min.x + 23, min.y + 24), col, 2.0, 2.0, 0);
         ImGui.ImDrawList_AddLine(dl, new ImVec2(min.x + 11, min.y + 13),
             new ImVec2(min.x + 11, min.y + 10), col, 2.0);
         ImGui.ImDrawList_AddLine(dl, new ImVec2(min.x + 11, min.y + 10),
