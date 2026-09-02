@@ -6,6 +6,7 @@ import imgui.Structs.ImVec2;
 import imgui.Structs.ImVec4;
 import imgui.Enums.ImGuiCol;
 import imgui.Enums.ImGuiKey;
+import imgui.Enums.ImGuiMouseCursor;
 import imgui.Enums.ImGuiStyleVar;
 import imgui.Enums.ImGuiWindowFlags;
 import imgui.ref.BoolRef;
@@ -155,7 +156,7 @@ class ItemUtilitiesMod {
         }
 
         var oldDeposit = showDepositMaterials.get();
-        ImGui.checkbox("Show Deposit Crafting Materials button", showDepositMaterials);
+        ImGui.checkbox("Show Deposit Crafting Components button", showDepositMaterials);
         if (showDepositMaterials.get() != oldDeposit) {
             if (!showDepositMaterials.get()) cancelDeposit();
             syncDepositButtonVisibility();
@@ -217,8 +218,10 @@ class ItemUtilitiesMod {
         if (ImGui.button("##deposit-materials", new ImVec2(32, 30)))
             if (!depositing) beginDeposit();
         drawDepositIcon();
-        if (ImGui.isItemHovered())
-            ImGui.setTooltip(status.length > 0 ? status : "Deposit Crafting Materials");
+        if (ImGui.isItemHovered()) {
+            ImGui.setMouseCursor(ImGuiMouseCursor.Hand);
+            ImGui.setTooltip(" " + (status.length > 0 ? status : "Deposit Crafting Components") + " ");
+        }
 
         ImGui.end();
         ImGui.popStyleColor(4);
@@ -288,7 +291,7 @@ class ItemUtilitiesMod {
         }
 
         if (transferIndexes.length == 0) {
-            status = "No crafting materials to deposit.";
+            status = "No crafting components to deposit.";
             return;
         }
 
@@ -363,7 +366,7 @@ class ItemUtilitiesMod {
         }
 
         depositing = false;
-        status = "Deposited all crafting materials.";
+        status = "Deposited all crafting components.";
     }
 
     static function findDestination(item:Dynamic):{ index:Int, count:Dynamic } {
@@ -545,7 +548,7 @@ class ItemUtilitiesMod {
                 return;
 
             HlxRuntime.callResolved(setOnClickMember, [depositButton, beginDeposit]);
-            HlxRuntime.callResolved(setTextTipMember, [depositButton, "Deposit Crafting Materials"]);
+            HlxRuntime.callResolved(setTextTipMember, [depositButton, "Deposit Crafting Components"]);
 
             // Domkit appends new components. Move ours immediately after Sort so
             // it behaves like a native part of the inventory header.
