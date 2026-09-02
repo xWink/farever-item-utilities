@@ -43,6 +43,7 @@ class ItemUtilitiesMod {
 
     static var itemType:hl.Bytes;
     static var inventoryType:hl.Bytes;
+    static var bankWindowType:hl.Bytes;
     static var propertiesType:hl.Bytes;
     static var uiElementType:hl.Bytes;
     static var h2dObjectType:hl.Bytes;
@@ -52,6 +53,7 @@ class ItemUtilitiesMod {
     static var getSlotStackSizeMember:hlx.runtime.ResolvedMember;
     static var getNextFreeIndexMember:hlx.runtime.ResolvedMember;
     static var requestTransferMember:hlx.runtime.ResolvedMember;
+    static var getMyHeroMember:hlx.runtime.ResolvedMember;
     static var createNewMember:hlx.runtime.ResolvedMember;
     static var getParentPropertiesMember:hlx.runtime.ResolvedMember;
     static var setOnClickMember:hlx.runtime.ResolvedMember;
@@ -221,8 +223,10 @@ class ItemUtilitiesMod {
     }
 
     static function beginDeposit():Void {
+        traceInventoryState("deposit clicked");
         if (!refreshInventories() || !resolveMembers()) {
             status = "Inventory is not ready.";
+            traceInventoryState("inventory resolution failed");
             return;
         }
 
@@ -369,10 +373,52 @@ class ItemUtilitiesMod {
             if (bankInventory == null)
                 bankInventory = HlxRuntime.resolveField(activeBankWindow, "inventory");
             selectSourceInventory();
+            if (sourceInventory == null)
+                sourceInventory = resolveHeroInventory();
         } catch (_:Dynamic) {
             return false;
         }
         return sourceInventory != null && bankInventory != null;
+    }
+
+    static function resolveHeroInventory():Dynamic {
+        try {
+            if (bankWindowType == null)
+                bankWindowType = HlxRuntime.resolveType("ui.win.BankWindow");
+            if (bankWindowType == null)
+                return null;
+            if (getMyHeroMember == null)
+                getMyHeroMember = HlxRuntime.resolveMember(bankWindowType, "get_myHero");
+            if (getMyHeroMember == null) {
+                trace("[ItemUtilities] get_myHero could not be resolved");
+                return null;
+            }
+
+            var hero:Dynamic = HlxRuntime.callResolved(getMyHeroMember, [activeBankWindow]);
+            var loadout:Dynamic = hero == null ? null : HlxRuntime.resolveField(hero, "loadout");
+            var inventory:Dynamic = loadout == null ? null : HlxRuntime.resolveField(loadout, "inventory");
+            trace("[ItemUtilities] hero fallback: hero=" + (hero != null)
+                + ", loadout=" + (loadout != null) + ", inventory=" + (inventory != null));
+            return inventory;
+        } catch (error:Dynamic) {
+            trace("[ItemUtilities] hero fallback failed: " + Std.string(error));
+            return null;
+        }
+    }
+
+    static function traceInventoryState(reason:String):Void {
+        trace("[ItemUtilities] " + reason + ": bankWindow=" + (activeBankWindow != null)
+            + ", bankInventory=" + (bankInventory != null)
+            + ", sourceInventory=" + (sourceInventory != null)
+            + ", observedWindows=" + openInventoryWindows.length);
+        for (index in 0...openInventoryWindows.length) {
+            var entry = openInventoryWindows[index];
+            var iconId = "<unavailable>";
+            try iconId = Std.string(HlxRuntime.resolveField(entry.window, "iconId")) catch (_:Dynamic) {}
+            trace("[ItemUtilities] observed[" + index + "]: iconId=" + iconId
+                + ", isBankWindow=" + (entry.window == activeBankWindow)
+                + ", isBankInventory=" + (entry.inventory == bankInventory));
+        }
     }
 
     static function selectSourceInventory():Void {
