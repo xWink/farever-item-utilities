@@ -6,7 +6,6 @@ import imgui.Structs.ImVec2;
 import imgui.Structs.ImVec4;
 import imgui.Enums.ImGuiCol;
 import imgui.Enums.ImGuiKey;
-import imgui.Enums.ImGuiMouseCursor;
 import imgui.Enums.ImGuiStyleVar;
 import imgui.Enums.ImGuiWindowFlags;
 import imgui.ref.BoolRef;
@@ -46,6 +45,8 @@ class ItemUtilitiesMod {
     static var inventoryType:hl.Bytes;
     static var bankWindowType:hl.Bytes;
     static var arrayObjType:hl.Bytes;
+    static var cursorType:hl.Bytes;
+    static var systemType:hl.Bytes;
     static var propertiesType:hl.Bytes;
     static var uiElementType:hl.Bytes;
     static var h2dObjectType:hl.Bytes;
@@ -57,6 +58,9 @@ class ItemUtilitiesMod {
     static var requestTransferMember:hlx.runtime.ResolvedMember;
     static var getMyHeroMember:hlx.runtime.ResolvedMember;
     static var arrayGetDynMember:hlx.runtime.ResolvedMember;
+    static var setSystemCursorMember:hlx.runtime.ResolvedMember;
+    static var buttonCursor:Dynamic;
+    static var cursorErrorLogged:Bool = false;
     static var createNewMember:hlx.runtime.ResolvedMember;
     static var getParentPropertiesMember:hlx.runtime.ResolvedMember;
     static var setOnClickMember:hlx.runtime.ResolvedMember;
@@ -219,7 +223,7 @@ class ItemUtilitiesMod {
             if (!depositing) beginDeposit();
         drawDepositIcon();
         if (ImGui.isItemHovered()) {
-            ImGui.setMouseCursor(ImGuiMouseCursor.Hand);
+            setGameButtonCursor();
             ImGui.setTooltip(" " + (status.length > 0 ? status : "Deposit Crafting Components") + " ");
         }
 
@@ -263,6 +267,28 @@ class ItemUtilitiesMod {
         ImGui.ImDrawList_AddLine(drawList,
             new ImVec2(min.x + 25, min.y + 19),
             new ImVec2(min.x + 25, min.y + 23), mark, 2.0);
+    }
+
+    static function setGameButtonCursor():Void {
+        try {
+            if (cursorType == null)
+                cursorType = HlxRuntime.resolveType("hxd.Cursor");
+            if (systemType == null)
+                systemType = HlxRuntime.resolveType("hxd.System");
+            if (cursorType == null || systemType == null)
+                return;
+            if (buttonCursor == null)
+                buttonCursor = HlxRuntime.constructEnum(cursorType, "Button", []);
+            if (setSystemCursorMember == null)
+                setSystemCursorMember = HlxRuntime.resolveStaticMember(systemType, "setCursor");
+            if (buttonCursor != null && setSystemCursorMember != null)
+                HlxRuntime.callResolved(setSystemCursorMember, [buttonCursor]);
+        } catch (error:Dynamic) {
+            if (!cursorErrorLogged) {
+                cursorErrorLogged = true;
+                trace("[ItemUtilities] button cursor failed: " + Std.string(error));
+            }
+        }
     }
 
     static function beginDeposit():Void {
