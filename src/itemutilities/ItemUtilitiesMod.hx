@@ -2,7 +2,12 @@ package itemutilities;
 
 import haxe.Json;
 import imgui.ImGui;
+import imgui.ImVec2;
+import imgui.ImVec4;
+import imgui.Enums.ImGuiCol;
 import imgui.Enums.ImGuiKey;
+import imgui.Enums.ImGuiStyleVar;
+import imgui.Enums.ImGuiWindowFlags;
 import imgui.ref.BoolRef;
 import sys.FileSystem;
 import sys.io.File;
@@ -15,7 +20,6 @@ class ItemUtilitiesMod {
     static var enabled = new BoolRef(true);
     static var showDepositMaterials = new BoolRef(true);
     static var settingsOpen = new BoolRef(true);
-    static var bankPanelOpen = new BoolRef(true);
     static var hasSeenMenu:Bool = false;
 
     static var hotkeyKey:Int = ImGuiKey.F9;
@@ -26,6 +30,7 @@ class ItemUtilitiesMod {
     static var capturingHotkey:Bool = false;
 
     static var activeBankWindow:Dynamic;
+    static var activeInventoryWindow:Dynamic;
     static var depositButton:Dynamic;
     static var sourceInventory:Dynamic;
     static var bankInventory:Dynamic;
@@ -64,21 +69,38 @@ class ItemUtilitiesMod {
     static function afterBankInit(instance:Dynamic, result:Void):Void {
         activeBankWindow = instance;
         depositButton = null;
-        bankPanelOpen.set(true);
         status = "";
         cancelDeposit();
         refreshInventories();
     }
 
+    @:hlx.postfix(ui.win.InventoryWindow.init)
+    static function afterInventoryInit(instance:Dynamic, result:Void):Void {
+        try {
+            var iconId:Dynamic = HlxRuntime.resolveField(instance, "iconId");
+            var inventory:Dynamic = HlxRuntime.resolveField(instance, "inventory");
+            if (iconId == "Bank") {
+                activeBankWindow = instance;
+                bankInventory = inventory;
+            } else if (iconId == "Inventory") {
+                activeInventoryWindow = instance;
+                sourceInventory = inventory;
+            }
+        } catch (_:Dynamic) {}
+    }
+
     @:hlx.postfix(ui.win.TitleWindow.onRemove)
     static function afterTitleWindowRemove(instance:Dynamic, result:Void):Void {
-        if (instance != activeBankWindow)
-            return;
-        cancelDeposit();
-        activeBankWindow = null;
-        depositButton = null;
-        sourceInventory = null;
-        bankInventory = null;
+        if (instance == activeInventoryWindow) {
+            activeInventoryWindow = null;
+            sourceInventory = null;
+        }
+        if (instance == activeBankWindow) {
+            cancelDeposit();
+            activeBankWindow = null;
+            depositButton = null;
+            bankInventory = null;
+        }
     }
 
     static function draw():Void {
@@ -89,7 +111,7 @@ class ItemUtilitiesMod {
             drawSettings();
 
         if (activeBankWindow != null && enabled.get() && showDepositMaterials.get())
-            drawBankUtilities();
+            drawBankHeaderButton();
 
     }
 
@@ -135,27 +157,52 @@ class ItemUtilitiesMod {
         ImGui.end();
     }
 
-    static function drawBankUtilities():Void {
-        if (!bankPanelOpen.get())
+    static function drawBankHeaderButton():Void {
+        var sortButton:Dynamic = null;
+        try {
+            var comp:Dynamic = HlxRuntime.resolveField(activeBankWindow, "comp");
+            sortButton = comp == null ? null : HlxRuntime.resolveField(comp, "sortButton");
+        } catch (_:Dynamic) {}
+        if (sortButton == null)
             return;
 
-        ImGui.setNextWindowBgAlpha(0.98);
-        if (!ImGui.begin("Bank Utilities##item-utilities-bank", bankPanelOpen)) {
+        var x:Float;
+        var y:Float;
+        try {
+            x = cast HlxRuntime.resolveField(sortButton, "absX");
+            y = cast HlxRuntime.resolveField(sortButton, "absY");
+        } catch (_:Dynamic) {
+            return;
+        }
+
+        // Keep the utility in the Bank header without modifying Domkit's live
+        // component tree (doing that after init can invalidate the whole UI).
+        ImGui.setNextWindowPos(new ImVec2(x - 38, y));
+        ImGui.setNextWindowBgAlpha(0);
+        var flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
+            | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings
+            | ImGuiWindowFlags.NoFocusOnAppearing;
+        ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, new ImVec2(0, 0));
+        ImGui.pushStyleVar(ImGuiStyleVar.FrameRounding, 5.0);
+        ImGui.pushStyleColor(ImGuiCol.Button, new ImVec4(0.91, 0.82, 0.77, 1));
+        ImGui.pushStyleColor(ImGuiCol.ButtonHovered, new ImVec4(0.98, 0.90, 0.84, 1));
+        ImGui.pushStyleColor(ImGuiCol.ButtonActive, new ImVec4(0.78, 0.66, 0.60, 1));
+        ImGui.pushStyleColor(ImGuiCol.Text, new ImVec4(0.34, 0.30, 0.28, 1));
+        if (!ImGui.begin("##item-utilities-bank-header", null, flags)) {
             ImGui.end();
+            ImGui.popStyleColor(4);
+            ImGui.popStyleVar(2);
             return;
         }
 
-        if (!depositing) {
-            if (ImGui.button("Deposit Crafting Materials"))
-                beginDeposit();
-        } else {
-            ImGui.text("Depositing crafting materials...");
-        }
-
-        if (status.length > 0)
-            ImGui.text(status);
+        if (ImGui.button(depositing ? "...##deposit-materials" : ">>##deposit-materials", new ImVec2(32, 30)))
+            if (!depositing) beginDeposit();
+        if (ImGui.isItemHovered())
+            ImGui.setTooltip(status.length > 0 ? status : "Deposit Crafting Materials");
 
         ImGui.end();
+        ImGui.popStyleColor(4);
+        ImGui.popStyleVar(2);
     }
 
     static function beginDeposit():Void {
@@ -304,16 +351,12 @@ class ItemUtilitiesMod {
         if (activeBankWindow == null)
             return false;
         try {
-            // InventoryWindow.init stores the exact live bank inventory directly
-            // on the BankWindow. Its owner is the hero, so this avoids relying on
-            // the inherited get_myHero method being reflectable through HLX.
-            bankInventory = HlxRuntime.resolveField(activeBankWindow, "inventory");
-            var hero:Dynamic = bankInventory == null ? null : HlxRuntime.resolveField(bankInventory, "owner");
-            var loadout:Dynamic = hero == null ? null : HlxRuntime.resolveField(hero, "loadout");
-            sourceInventory = loadout == null ? null : HlxRuntime.resolveField(loadout, "inventory");
+            if (bankInventory == null)
+                bankInventory = HlxRuntime.resolveField(activeBankWindow, "inventory");
+            if (sourceInventory == null && activeInventoryWindow != null)
+                sourceInventory = HlxRuntime.resolveField(activeInventoryWindow, "inventory");
         } catch (_:Dynamic) {
-            sourceInventory = null;
-            bankInventory = null;
+            return false;
         }
         return sourceInventory != null && bankInventory != null;
     }
