@@ -137,23 +137,23 @@ class ItemUtilitiesMod {
         return interceptLockEditClick(instance) ? Skip : Continue;
     }
 
-    @:hlx.prefix(st.Loadout.sellItem)
-    static function beforeSellItem(instance:Dynamic, item:Dynamic, callback:Dynamic):HlxPrefixResult<Dynamic> {
-        return isItemLocked(item) ? SkipWith(null) : Continue;
+    @:hlx.prefix(st.Loadout.canSellItem)
+    static function beforeCanSellItem(instance:Dynamic, item:Dynamic):HlxPrefixResult<Bool> {
+        return isItemLocked(item) ? SkipWith(false) : Continue;
     }
 
-    @:hlx.prefix(st.Loadout.completeItem)
-    static function beforeCompleteItem(instance:Dynamic, item:Dynamic, callback:Dynamic):HlxPrefixResult<Dynamic> {
-        return isItemLocked(item) ? SkipWith(null) : Continue;
+    @:hlx.prefix(st.Loadout.canCompleteItem)
+    static function beforeCanCompleteItem(instance:Dynamic, item:Dynamic):HlxPrefixResult<Bool> {
+        return isItemLocked(item) ? SkipWith(false) : Continue;
     }
 
-    @:hlx.prefix(st.Inventory.requestDropIndex)
-    static function beforeDropItem(instance:Dynamic, index:Int, count:Bool, unknown:Dynamic,
-        callback:Dynamic, rpcCallback:Dynamic):HlxPrefixResult<Dynamic> {
+    @:hlx.prefix(st.Inventory.canRequestDropIndex)
+    static function beforeCanDropItem(instance:Dynamic, index:Int, count:Bool,
+        force:hl.Ref<Bool>, unknown:Null<Int>):HlxPrefixResult<Bool> {
         try {
             var stack = arrayGet(getContent(instance), index);
             var item:Dynamic = stack == null ? null : HlxRuntime.resolveField(stack, "item");
-            return isItemLocked(item) ? SkipWith(null) : Continue;
+            return isItemLocked(item) ? SkipWith(false) : Continue;
         } catch (error:Dynamic) {
             logLockError("discard guard", error);
             return Continue;
@@ -667,7 +667,7 @@ class ItemUtilitiesMod {
             return;
         try {
             var list:Dynamic = HlxRuntime.resolveField(comp, "slotList");
-            var children:Dynamic = list == null ? null : HlxRuntime.resolveField(list, "children");
+            var children:Dynamic = list == null ? null : HlxRuntime.resolveField(list, "childElements");
             var active:Int = cast HlxRuntime.resolveField(comp, "activeSlotCount");
             var count = arrayLength(children);
             if (active < count) count = active;
