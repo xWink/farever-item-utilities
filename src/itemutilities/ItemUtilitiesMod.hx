@@ -11,6 +11,8 @@ import imgui.Enums.ImGuiWindowFlags;
 import imgui.ref.BoolRef;
 import sys.FileSystem;
 import sys.io.File;
+import hlx.runtime.HlxPrefixControl;
+import hlx.runtime.HlxPrefixResult;
 
 @:build(hlx.runtime.Mod.build())
 class ItemUtilitiesMod {
@@ -69,11 +71,21 @@ class ItemUtilitiesMod {
     static var setVisibleMember:hlx.runtime.ResolvedMember;
     static var getChildIndexMember:hlx.runtime.ResolvedMember;
     static var addChildAtMember:hlx.runtime.ResolvedMember;
-    static var itemGetClidMember:hlx.runtime.ResolvedMember;
-    static var sourceSnapshot:Map<Int, String>;
-    static var bankSnapshot:Map<Int, String>;
-    static var diagnosticFrame:Int = 0;
-    static var initializedSlots:Int = 0;
+    static var inventoryComps:Array<Dynamic> = [];
+    static var playerInventoryComp:Dynamic;
+    static var latestSlots:Array<Dynamic> = [];
+    static var lockEditMode:Bool = false;
+    static var lockRecords:Array<Dynamic> = [];
+    static var previousItems:Map<String, Dynamic>;
+    static var lockStateInitialized:Bool = false;
+    static var activeCharacterKey:String;
+    static var activeHero:Dynamic;
+    static var playerControllerType:hl.Bytes;
+    static var getControlTargetMember:hlx.runtime.ResolvedMember;
+    static var inventorySlotType:hl.Bytes;
+    static var setSlotLockedMember:hlx.runtime.ResolvedMember;
+    static var lockErrors:Map<String, Bool> = new Map();
+    static inline var MISSING_LOCK_SCAN_LIMIT = 90;
 
     static function main():Void {
         loadConfig();
@@ -113,21 +125,93 @@ class ItemUtilitiesMod {
         } catch (_:Dynamic) {}
     }
 
-    @:hlx.postfix(ui.win.InventorySlot.init)
-    static function afterDiagnosticSlotInit(instance:Dynamic, result:Void):Void {
-        initializedSlots++;
+    @:hlx.postfix(ui.win.InventoryComp.init)
+    static function afterLockInventoryCompInit(instance:Dynamic, result:Void):Void {
+        var inventory:Dynamic = null;
+        try inventory = HlxRuntime.resolveField(instance, "inventory") catch (_:Dynamic) {}
+        var replaced = false;
+        if (inventory != null) {
+            for (index in 0...inventoryComps.length) {
+                try {
+                    if (HlxRuntime.resolveField(inventoryComps[index], "inventory") == inventory) {
+                        inventoryComps[index] = instance;
+                        replaced = true;
+                        break;
+                    }
+                } catch (_:Dynamic) {}
+            }
+        }
+        if (!replaced && inventoryComps.indexOf(instance) < 0)
+            inventoryComps.push(instance);
+        if (sourceInventory == null && activeBankWindow == null) {
+            sourceInventory = inventory;
+        }
+        selectPlayerInventoryComp();
+    }
+
+    @:hlx.postfix(client.PlayerController.updateInputs)
+    static function afterPlayerInputs(instance:Dynamic, dt:Float, result:Void):Void {
         try {
-            var index:Dynamic = HlxRuntime.resolveField(instance, "index");
+            if (playerControllerType == null)
+                playerControllerType = HlxRuntime.resolveType("client.PlayerController");
+            if (playerControllerType == null)
+                return;
+            if (getControlTargetMember == null)
+                getControlTargetMember = HlxRuntime.resolveMember(playerControllerType, "getControlTarget");
+            if (getControlTargetMember == null)
+                return;
+            var target:Dynamic = HlxRuntime.callResolved(getControlTargetMember, [instance]);
+            if (target != null && fieldOrNull(target, "loadout") != null)
+                activeHero = target;
+        } catch (error:Dynamic) logLockError("hero capture", error);
+    }
+
+    @:hlx.postfix(ui.win.InventorySlot.init)
+    static function afterLockSlotInit(instance:Dynamic, result:Void):Void {
+        try {
             var inventory:Dynamic = HlxRuntime.resolveField(instance, "inventory");
-            var inner:Dynamic = HlxRuntime.resolveField(instance, "innerSlot");
-            var innerParent:Dynamic = inner == null ? null : HlxRuntime.resolveField(inner, "parent");
-            trace("[ItemUtilitiesDiag] InventorySlot.init #" + initializedSlots
-                + " index=" + Std.string(index)
-                + " inventory=" + (inventory != null)
-                + " innerSlot=" + (inner != null)
-                + " innerParentIsSlot=" + (innerParent == instance));
+            var index:Int = cast HlxRuntime.resolveField(instance, "index");
+            if (inventory == null || index < 0) return;
+            for (entry in latestSlots) {
+                if (entry.inventory == inventory && entry.index == index) {
+                    entry.slot = instance;
+                    entry.modLocked = false;
+                    applyLockEntry(entry);
+                    return;
+                }
+            }
+            var entry:Dynamic = { inventory: inventory, index: index, slot: instance, modLocked: false };
+            latestSlots.push(entry);
+            applyLockEntry(entry);
+        } catch (error:Dynamic) logLockError("slot registration", error);
+    }
+
+    @:hlx.prefix(ui.win.InventorySlot.defaultTransferAction)
+    static function lockEditTransfer(instance:Dynamic, destination:Dynamic):HlxPrefixControl
+        return handleLockEditClick(instance) ? Skip : Continue;
+
+    @:hlx.prefix(ui.win.InventorySlot.defaultEquipAction)
+    static function lockEditEquip(instance:Dynamic, inventories:Dynamic):HlxPrefixControl
+        return handleLockEditClick(instance) ? Skip : Continue;
+
+    @:hlx.prefix(st.Loadout.canSellItem)
+    static function protectLockedSale(instance:Dynamic, item:Dynamic):HlxPrefixResult<Bool>
+        return isRuntimeLocked(item) ? SkipWith(false) : Continue;
+
+    @:hlx.prefix(st.Loadout.canCompleteItem)
+    static function protectLockedRecycler(instance:Dynamic, item:Dynamic):HlxPrefixResult<Bool>
+        return isRuntimeLocked(item) ? SkipWith(false) : Continue;
+
+    @:hlx.prefix(st.Inventory.canRequestDropIndex)
+    static function protectLockedDrop(instance:Dynamic, index:Int, count:Bool,
+        force:hl.Ref<Bool>, unknown:Null<Int>):HlxPrefixResult<Bool> {
+        try {
+            var stack = arrayGet(getContent(instance), index);
+            var item:Dynamic = stack == null ? null : HlxRuntime.resolveField(stack, "item");
+            return isRuntimeLocked(item) ? SkipWith(false) : Continue;
         } catch (error:Dynamic) {
-            trace("[ItemUtilitiesDiag] InventorySlot.init inspection failed: " + Std.string(error));
+            logLockError("discard guard", error);
+            return Continue;
         }
     }
 
@@ -161,9 +245,11 @@ class ItemUtilitiesMod {
         if (activeBankWindow != null && enabled.get() && showDepositMaterials.get())
             drawBankHeaderButton();
 
-        diagnosticFrame++;
-        if (diagnosticFrame % 6 == 0)
-            captureDiagnosticSnapshots();
+        if (enabled.get())
+            drawLockEditButton();
+
+        if (enabled.get())
+            reconcileLockState();
 
     }
 
@@ -182,7 +268,12 @@ class ItemUtilitiesMod {
         var oldEnabled = enabled.get();
         ImGui.checkbox("Enable item utilities", enabled);
         if (enabled.get() != oldEnabled) {
-            if (!enabled.get()) cancelDeposit();
+            if (!enabled.get()) {
+                cancelDeposit();
+                lockEditMode = false;
+                clearModLockBadges();
+            }
+            resetLockValidation();
             syncDepositButtonVisibility();
             saveConfig();
         }
@@ -480,18 +571,7 @@ class ItemUtilitiesMod {
 
     static function resolveHeroInventory():Dynamic {
         try {
-            if (bankWindowType == null)
-                bankWindowType = HlxRuntime.resolveType("ui.win.BankWindow");
-            if (bankWindowType == null)
-                return null;
-            if (getMyHeroMember == null)
-                getMyHeroMember = HlxRuntime.resolveMember(bankWindowType, "get_myHero");
-            if (getMyHeroMember == null) {
-                trace("[ItemUtilities] get_myHero could not be resolved");
-                return null;
-            }
-
-            var hero:Dynamic = HlxRuntime.callResolved(getMyHeroMember, [activeBankWindow]);
+            var hero = resolveHero();
             var loadout:Dynamic = hero == null ? null : HlxRuntime.resolveField(hero, "loadout");
             var inventory:Dynamic = loadout == null ? null : HlxRuntime.resolveField(loadout, "inventory");
             return inventory;
@@ -513,6 +593,560 @@ class ItemUtilitiesMod {
         }
     }
 
+    static function selectPlayerInventoryComp():Void {
+        playerInventoryComp = null;
+        if (sourceInventory == null)
+            sourceInventory = resolveHeroInventory();
+        for (comp in inventoryComps) {
+            try {
+                if (HlxRuntime.resolveField(comp, "inventory") == sourceInventory) {
+                    playerInventoryComp = comp;
+                    return;
+                }
+            } catch (_:Dynamic) {}
+        }
+    }
+
+    static function drawLockEditButton():Void {
+        selectPlayerInventoryComp();
+        if (playerInventoryComp == null)
+            return;
+
+        var sortButton:Dynamic;
+        try sortButton = HlxRuntime.resolveField(playerInventoryComp, "sortButton") catch (_:Dynamic) return;
+        if (sortButton == null)
+            return;
+
+        var x:Float;
+        var y:Float;
+        try {
+            x = cast HlxRuntime.resolveField(sortButton, "absX");
+            y = cast HlxRuntime.resolveField(sortButton, "absY");
+        } catch (_:Dynamic) return;
+
+        ImGui.setNextWindowPos(new ImVec2(x - 38, y));
+        ImGui.setNextWindowBgAlpha(0);
+        var flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
+            | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings
+            | ImGuiWindowFlags.NoFocusOnAppearing;
+        ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, new ImVec2(0, 0));
+        ImGui.pushStyleVar(ImGuiStyleVar.FrameRounding, 5.0);
+        var base = lockEditMode ? new ImVec4(0.58, 0.43, 0.25, 1) : new ImVec4(0.40, 0.37, 0.35, 1);
+        ImGui.pushStyleColor(ImGuiCol.Button, base);
+        ImGui.pushStyleColor(ImGuiCol.ButtonHovered, new ImVec4(0.48, 0.44, 0.41, 1));
+        ImGui.pushStyleColor(ImGuiCol.ButtonActive, new ImVec4(0.32, 0.29, 0.27, 1));
+        ImGui.pushStyleColor(ImGuiCol.Text, new ImVec4(0.92, 0.86, 0.80, 1));
+        if (ImGui.begin("##item-utilities-lock-header", null, flags)) {
+            if (ImGui.button("##item-lock-mode", new ImVec2(32, 30)))
+                lockEditMode = !lockEditMode;
+            drawLockModeIcon();
+            if (ImGui.isItemHovered()) {
+                setGameButtonCursor();
+                ImGui.setTooltip(lockEditMode ? "Stop editing item locks" : "Edit item locks");
+            }
+        }
+        ImGui.end();
+        ImGui.popStyleColor(4);
+        ImGui.popStyleVar(2);
+    }
+
+    static function drawLockModeIcon():Void {
+        var min = ImGui.getItemRectMin();
+        var drawList = ImGui.getWindowDrawList();
+        var color = ImGui.colorConvertFloat4ToU32(new ImVec4(0.94, 0.89, 0.83, 1));
+        ImGui.ImDrawList_AddRect(drawList,
+            new ImVec2(min.x + 9, min.y + 13),
+            new ImVec2(min.x + 23, min.y + 24), color, 2.0, 2.0, 0);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 11, min.y + 13),
+            new ImVec2(min.x + 11, min.y + 10), color, 2.0);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 11, min.y + 10),
+            new ImVec2(min.x + 14, min.y + 6), color, 2.0);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 14, min.y + 6),
+            new ImVec2(min.x + 19, min.y + 6), color, 2.0);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 19, min.y + 6),
+            new ImVec2(min.x + 21, min.y + 10), color, 2.0);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 21, min.y + 10),
+            new ImVec2(min.x + 21, min.y + 13), color, 2.0);
+    }
+
+    static function handleLockEditClick(slot:Dynamic):Bool {
+        if (!enabled.get() || !lockEditMode || slot == null)
+            return false;
+        try {
+            var inventory:Dynamic = HlxRuntime.resolveField(slot, "inventory");
+            if (inventory == null || inventory != sourceInventory)
+                return false;
+            var index:Int = cast HlxRuntime.resolveField(slot, "index");
+            if (index < 0)
+                return true;
+            var stack = arrayGet(getContent(inventory), index);
+            var item:Dynamic = stack == null ? null : HlxRuntime.resolveField(stack, "item");
+            if (item == null)
+                return true;
+            if (!isNonStackable(inventory, index))
+                return true;
+
+            reconcileLockState();
+            var character = resolveCharacterKey();
+            var fingerprint = itemFingerprint(item);
+            var uid = itemUid(item);
+            if (character == null || fingerprint == null || uid == null)
+                return true;
+
+            var removeIndex = -1;
+            for (recordIndex in 0...lockRecords.length) {
+                var record = lockRecords[recordIndex];
+                if (recordString(record, "character") != character)
+                    continue;
+                if (recordString(record, "uid") == uid
+                    || (recordString(record, "container") == "inventory"
+                        && recordInt(record, "slot", -1) == index
+                        && recordString(record, "fingerprint") == fingerprint)) {
+                    removeIndex = recordIndex;
+                    break;
+                }
+            }
+
+            if (removeIndex >= 0) {
+                lockRecords.splice(removeIndex, 1);
+            } else {
+                lockRecords.push({
+                    character: character,
+                    container: "inventory",
+                    slot: index,
+                    fingerprint: fingerprint,
+                    uid: uid,
+                    validated: true,
+                    pending: 0
+                });
+            }
+            applyLockToLatestSlots();
+            saveConfig();
+            return true;
+        } catch (error:Dynamic) {
+            logLockError("edit-mode click", error);
+            return true;
+        }
+    }
+
+    static function reconcileLockState():Void {
+        try {
+            var character = resolveCharacterKey();
+            if (character == null)
+                return;
+            if (activeCharacterKey != character) {
+                activeCharacterKey = character;
+                previousItems = null;
+                lockStateInitialized = false;
+                resetRecordValidation(character);
+            }
+
+            var currentItems:Map<String, Dynamic> = new Map();
+            var byLocator:Map<String, Dynamic> = new Map();
+            var available:Map<String, Bool> = new Map();
+            collectCurrentItems(currentItems, byLocator, available);
+            if (!available.exists("inventory"))
+                return;
+
+            var firstPass = !lockStateInitialized;
+            var changed = false;
+            var kept:Array<Dynamic> = [];
+            var claimed:Map<String, Bool> = new Map();
+
+            for (record in lockRecords) {
+                if (recordString(record, "character") != character) {
+                    kept.push(record);
+                    continue;
+                }
+
+                var container = recordString(record, "container");
+                var fingerprint = recordString(record, "fingerprint");
+                var uid = recordString(record, "uid");
+                var validated = recordBool(record, "validated", false);
+
+                if (!validated) {
+                    if (!available.exists(container)) {
+                        kept.push(record);
+                        continue;
+                    }
+                    var exact = byLocator.get(locatorKey(container, recordInt(record, "slot", -1)));
+                    if (exact == null || exact.fingerprint != fingerprint || exact.lockable != true) {
+                        changed = true;
+                        continue;
+                    }
+                    record.uid = exact.uid;
+                    record.validated = true;
+                    record.pending = 0;
+                    claimed.set(exact.uid, true);
+                    kept.push(record);
+                    if (uid != exact.uid)
+                        changed = true;
+                    continue;
+                }
+
+                var current = uid == null ? null : currentItems.get(uid);
+                if (current != null) {
+                    if (current.fingerprint != fingerprint || current.lockable != true) {
+                        changed = true;
+                        continue;
+                    }
+                    if (recordString(record, "container") != current.container
+                        || recordInt(record, "slot", -1) != current.slot) {
+                        record.container = current.container;
+                        record.slot = current.slot;
+                        changed = true;
+                    }
+                    record.pending = 0;
+                    claimed.set(uid, true);
+                    kept.push(record);
+                    continue;
+                }
+
+                // Only a lock that was already validated in this running session
+                // may follow an observed removal/addition transition. Restored
+                // records never use this search path.
+                var candidates:Array<Dynamic> = [];
+                for (candidate in currentItems) {
+                    if (candidate.fingerprint != fingerprint || candidate.lockable != true)
+                        continue;
+                    if (claimed.exists(candidate.uid))
+                        continue;
+                    if (previousItems != null && previousItems.exists(candidate.uid))
+                        continue;
+                    candidates.push(candidate);
+                }
+
+                if (candidates.length == 1) {
+                    var moved = candidates[0];
+                    record.uid = moved.uid;
+                    record.container = moved.container;
+                    record.slot = moved.slot;
+                    record.pending = 0;
+                    claimed.set(moved.uid, true);
+                    kept.push(record);
+                    changed = true;
+                } else if (candidates.length > 1) {
+                    // Ambiguous identical-item transitions must never move a lock
+                    // to an arbitrary copy.
+                    changed = true;
+                } else if (!available.exists(container)) {
+                    kept.push(record);
+                } else {
+                    var pending = recordInt(record, "pending", 0) + 1;
+                    record.pending = pending;
+                    if (pending <= MISSING_LOCK_SCAN_LIMIT)
+                        kept.push(record);
+                    else
+                        changed = true;
+                }
+            }
+
+            lockRecords = kept;
+            previousItems = currentItems;
+            lockStateInitialized = true;
+            if (changed || firstPass)
+                applyLockToLatestSlots();
+            if (changed)
+                saveConfig();
+        } catch (error:Dynamic) logLockError("state reconciliation", error);
+    }
+
+    static function collectCurrentItems(current:Map<String, Dynamic>, byLocator:Map<String, Dynamic>,
+        available:Map<String, Bool>):Void {
+        var storages:Array<Dynamic> = [];
+        addStorage(storages, "inventory", sourceInventory);
+
+        var hero = resolveHero();
+        var loadout = hero == null ? null : fieldOrNull(hero, "loadout");
+        if (loadout != null) {
+            var heroInventory = fieldOrNull(loadout, "inventory");
+            if (sourceInventory == null && heroInventory != null)
+                sourceInventory = heroInventory;
+            addStorage(storages, "inventory", heroInventory);
+            addStorage(storages, "equipment", fieldOrNull(loadout, "equipment"));
+            addStorage(storages, "bank", fieldOrNull(loadout, "bank"));
+        }
+        addStorage(storages, "bank", bankInventory);
+
+        for (storage in storages) {
+            var inventory:Dynamic = storage.inventory;
+            var container:String = storage.container;
+            var content = getContent(inventory);
+            if (content == null)
+                continue;
+            available.set(container, true);
+            for (index in 0...arrayLength(content)) {
+                var stack = arrayGet(content, index);
+                if (stack == null)
+                    continue;
+                var item:Dynamic = fieldOrNull(stack, "item");
+                var uid = itemUid(item);
+                var fingerprint = itemFingerprint(item);
+                if (uid == null || fingerprint == null)
+                    continue;
+                var entry:Dynamic = {
+                    uid: uid,
+                    fingerprint: fingerprint,
+                    container: container,
+                    slot: index,
+                    inventory: inventory,
+                    item: item,
+                    lockable: isNonStackable(inventory, index)
+                };
+                current.set(uid, entry);
+                byLocator.set(locatorKey(container, index), entry);
+            }
+        }
+    }
+
+    static function addStorage(storages:Array<Dynamic>, container:String, inventory:Dynamic):Void {
+        if (inventory == null)
+            return;
+        for (storage in storages)
+            if (storage.inventory == inventory)
+                return;
+        storages.push({ container: container, inventory: inventory });
+    }
+
+    static inline function locatorKey(container:String, slot:Int):String
+        return container + ":" + slot;
+
+    static function isRuntimeLocked(item:Dynamic):Bool {
+        if (!enabled.get() || item == null)
+            return false;
+        var uid = itemUid(item);
+        if (uid == null)
+            return false;
+        for (record in lockRecords) {
+            if (recordBool(record, "validated", false)
+                && recordString(record, "uid") == uid
+                && (activeCharacterKey == null || recordString(record, "character") == activeCharacterKey))
+                return true;
+        }
+        return false;
+    }
+
+    static function isNonStackable(inventory:Dynamic, index:Int):Bool {
+        try {
+            if (inventoryType == null)
+                inventoryType = HlxRuntime.resolveType("st.Inventory");
+            if (inventoryType == null)
+                return false;
+            if (getSlotStackSizeMember == null)
+                getSlotStackSizeMember = HlxRuntime.resolveMember(inventoryType, "getSlotStackSize");
+            if (getSlotStackSizeMember == null)
+                return false;
+            var maximum:Dynamic = HlxRuntime.callResolved(getSlotStackSizeMember, [inventory, index]);
+            return maximum != null && cast maximum <= 1;
+        } catch (error:Dynamic) {
+            logLockError("stackability check", error);
+            return false;
+        }
+    }
+
+    static function itemUid(item:Dynamic):String {
+        if (item == null)
+            return null;
+        try {
+            var value = HlxRuntime.resolveField(item, "__uid");
+            return value == null ? null : Std.string(value);
+        } catch (_:Dynamic) return null;
+    }
+
+    static function itemFingerprint(item:Dynamic):String {
+        if (item == null)
+            return null;
+        try {
+            var kind = Std.string(HlxRuntime.resolveField(item, "kind"));
+            var flags = Std.string(HlxRuntime.resolveField(item, "flags"));
+            var inf:Dynamic = HlxRuntime.resolveField(item, "inf");
+            var definition = inf == null ? "null" : Std.string(HlxRuntime.resolveField(inf, "id"));
+            var affixes:Dynamic = HlxRuntime.resolveField(item, "afxUIDs");
+            var affixParts:Array<String> = [];
+            for (index in 0...arrayLength(affixes))
+                affixParts.push(Std.string(arrayGet(affixes, index)));
+            return definition + "|" + kind + "|" + flags + "|" + affixParts.join(",");
+        } catch (error:Dynamic) {
+            logLockError("item fingerprint", error);
+            return null;
+        }
+    }
+
+    static function resolveHero():Dynamic {
+        if (activeHero != null)
+            return activeHero;
+        if (activeBankWindow == null)
+            return null;
+        try {
+            if (bankWindowType == null)
+                bankWindowType = HlxRuntime.resolveType("ui.win.BankWindow");
+            if (bankWindowType == null)
+                return null;
+            if (getMyHeroMember == null)
+                getMyHeroMember = HlxRuntime.resolveMember(bankWindowType, "get_myHero");
+            if (getMyHeroMember != null)
+                activeHero = HlxRuntime.callResolved(getMyHeroMember, [activeBankWindow]);
+        } catch (error:Dynamic) logLockError("hero resolution", error);
+        return activeHero;
+    }
+
+    static function resolveCharacterKey():String {
+        var hero = resolveHero();
+        if (hero == null)
+            return null;
+
+        var owner = fieldOrNull(hero, "ownerPlayer");
+        if (owner == null)
+            owner = fieldOrNull(hero, "owner");
+        var heroData = fieldOrNull(owner, "heroData");
+        var value = firstStringField(heroData, ["databaseID", "databaseKey"]);
+        if (value != null)
+            return "hero-data:" + value;
+
+        value = firstStringField(hero, ["characterName", "displayName", "name"]);
+        if (value != null)
+            return "hero:" + value;
+
+        value = firstStringField(owner, ["characterName", "displayName", "name", "playerId", "accountId"]);
+        if (value != null)
+            return "player:" + value;
+
+        logLockError("character identity", "Farever did not expose a stable character identifier");
+        return null;
+    }
+
+    static function firstStringField(object:Dynamic, names:Array<String>):String {
+        if (object == null)
+            return null;
+        for (name in names) {
+            var value = fieldOrNull(object, name);
+            if (value != null) {
+                var text = Std.string(value);
+                if (text.length > 0 && text != "null")
+                    return text;
+            }
+        }
+        return null;
+    }
+
+    static function fieldOrNull(object:Dynamic, name:String):Dynamic {
+        if (object == null)
+            return null;
+        try return HlxRuntime.resolveField(object, name) catch (_:Dynamic) return null;
+    }
+
+    static function recordString(record:Dynamic, name:String):String {
+        var value = Reflect.field(record, name);
+        return value == null ? null : Std.string(value);
+    }
+
+    static function recordInt(record:Dynamic, name:String, fallback:Int):Int {
+        var value = Reflect.field(record, name);
+        return value == null ? fallback : cast value;
+    }
+
+    static function recordBool(record:Dynamic, name:String, fallback:Bool):Bool {
+        var value = Reflect.field(record, name);
+        return value == null ? fallback : value == true;
+    }
+
+    static function resetLockValidation():Void {
+        previousItems = null;
+        lockStateInitialized = false;
+        if (activeCharacterKey != null)
+            resetRecordValidation(activeCharacterKey);
+    }
+
+    static function resetRecordValidation(character:String):Void {
+        for (record in lockRecords) {
+            if (recordString(record, "character") == character) {
+                record.validated = false;
+                record.pending = 0;
+            }
+        }
+    }
+
+    static function applyLockToLatestSlots():Void {
+        for (entry in latestSlots)
+            applyLockEntry(entry);
+    }
+
+    static function applyLockEntry(entry:Dynamic):Void {
+        if (entry == null || entry.slot == null)
+            return;
+        try {
+            var stack = arrayGet(getContent(entry.inventory), entry.index);
+            var item:Dynamic = stack == null ? null : fieldOrNull(stack, "item");
+            var desired = isRuntimeLocked(item);
+            if (desired) {
+                var current:Dynamic = HlxRuntime.resolveField(entry.slot, "locked");
+                if (current != true)
+                    setSlotLocked(entry.slot, true);
+                entry.modLocked = true;
+                resizeSlotLockBadge(entry.slot);
+            } else if (entry.modLocked == true) {
+                var current:Dynamic = HlxRuntime.resolveField(entry.slot, "locked");
+                if (current == true)
+                    setSlotLocked(entry.slot, false);
+                entry.modLocked = false;
+            }
+        } catch (error:Dynamic) logLockError("badge update", error);
+    }
+
+    static function clearModLockBadges():Void {
+        for (entry in latestSlots) {
+            if (entry == null || entry.slot == null || entry.modLocked != true)
+                continue;
+            try {
+                var current:Dynamic = HlxRuntime.resolveField(entry.slot, "locked");
+                if (current == true)
+                    setSlotLocked(entry.slot, false);
+                entry.modLocked = false;
+            } catch (error:Dynamic) logLockError("badge clear", error);
+        }
+    }
+
+    static function setSlotLocked(slot:Dynamic, locked:Bool):Void {
+        if (inventorySlotType == null)
+            inventorySlotType = HlxRuntime.resolveType("ui.win.InventorySlot");
+        if (inventorySlotType == null)
+            return;
+        if (setSlotLockedMember == null)
+            setSlotLockedMember = HlxRuntime.resolveMember(inventorySlotType, "set_locked");
+        if (setSlotLockedMember == null) {
+            logLockError("native badge setter", "set_locked could not be resolved");
+            return;
+        }
+        try HlxRuntime.callResolved(setSlotLockedMember, [slot, locked])
+        catch (error:Dynamic) logLockError("native badge setter", error);
+    }
+
+    static function resizeSlotLockBadge(slot:Dynamic):Void {
+        var badge = fieldOrNull(slot, "lockedBmp");
+        if (badge == null)
+            return;
+        try {
+            HlxRuntime.setField(badge, "scaleX", 0.45);
+            HlxRuntime.setField(badge, "scaleY", 0.45);
+            HlxRuntime.setField(badge, "x", 35.0);
+            HlxRuntime.setField(badge, "y", 3.0);
+        } catch (error:Dynamic) logLockError("badge positioning", error);
+    }
+
+    static function logLockError(area:String, error:Dynamic):Void {
+        var message = Std.string(error);
+        var key = area + ":" + message;
+        if (lockErrors.exists(key))
+            return;
+        lockErrors.set(key, true);
+        trace("[ItemUtilities] item locking error (" + area + "): " + message);
+    }
+
     static function getContent(inventory:Dynamic):Dynamic {
         if (inventory == null)
             return null;
@@ -530,69 +1164,6 @@ class ItemUtilitiesMod {
             trace("[ItemUtilities] inventory slot access failed: " + Std.string(error));
         }
         return null;
-    }
-
-    static function captureDiagnosticSnapshots():Void {
-        if (activeBankWindow != null)
-            refreshInventories();
-        if (sourceInventory != null)
-            sourceSnapshot = captureInventorySnapshot("inventory", sourceInventory, sourceSnapshot);
-        if (bankInventory != null)
-            bankSnapshot = captureInventorySnapshot("bank", bankInventory, bankSnapshot);
-    }
-
-    static function captureInventorySnapshot(label:String, inventory:Dynamic,
-        previous:Map<Int, String>):Map<Int, String> {
-        var next:Map<Int, String> = new Map();
-        var content = getContent(inventory);
-        var length = arrayLength(content);
-        for (index in 0...length) {
-            var stack = arrayGet(content, index);
-            var value = describeStack(stack);
-            next.set(index, value);
-        }
-        if (previous == null) {
-            trace("[ItemUtilitiesDiag] " + label + " baseline captured; slots=" + length);
-            return next;
-        }
-        var max = length;
-        for (index in previous.keys()) if (index >= max) max = index + 1;
-        for (index in 0...max) {
-            var before = previous.exists(index) ? previous.get(index) : "empty";
-            var after = next.exists(index) ? next.get(index) : "empty";
-            if (before != after)
-                trace("[ItemUtilitiesDiag] " + label + " slot " + index + ": " + before + " -> " + after);
-        }
-        return next;
-    }
-
-    static function describeStack(stack:Dynamic):String {
-        if (stack == null)
-            return "empty";
-        try {
-            var item:Dynamic = HlxRuntime.resolveField(stack, "item");
-            var count:Dynamic = HlxRuntime.resolveField(stack, "count");
-            if (item == null)
-                return "item=null,count=" + Std.string(count);
-            var uid:Dynamic = HlxRuntime.resolveField(item, "__uid");
-            var kind:Dynamic = HlxRuntime.resolveField(item, "kind");
-            var inf:Dynamic = HlxRuntime.resolveField(item, "inf");
-            var definitionId = "null";
-            if (inf != null) {
-                try definitionId = Std.string(HlxRuntime.resolveField(inf, "id")) catch (_:Dynamic) {}
-            }
-            if (itemType == null) itemType = HlxRuntime.resolveType("st.Item");
-            if (itemGetClidMember == null && itemType != null)
-                itemGetClidMember = HlxRuntime.resolveMember(itemType, "getCLID");
-            var clid = "unavailable";
-            if (itemGetClidMember != null) {
-                try clid = Std.string(HlxRuntime.callResolved(itemGetClidMember, [item])) catch (_:Dynamic) {}
-            }
-            return "uid=" + Std.string(uid) + ",clid=" + clid + ",kind=" + Std.string(kind)
-                + ",definition=" + definitionId + ",count=" + Std.string(count);
-        } catch (error:Dynamic) {
-            return "inspection-error=" + Std.string(error);
-        }
     }
 
     static function arrayLength(array:Dynamic):Int {
@@ -795,10 +1366,45 @@ class ItemUtilitiesMod {
             if (Reflect.hasField(data, "hotkeySuper")) hotkeySuper = Reflect.field(data, "hotkeySuper");
             if (Reflect.hasField(data, "hasSeenMenu")) hasSeenMenu = Reflect.field(data, "hasSeenMenu");
             else hasSeenMenu = true;
+            if (Reflect.hasField(data, "itemLocks")) {
+                var saved:Array<Dynamic> = cast Reflect.field(data, "itemLocks");
+                if (saved != null) {
+                    for (record in saved) {
+                        var character = recordString(record, "character");
+                        var container = recordString(record, "container");
+                        var slot = recordInt(record, "slot", -1);
+                        var fingerprint = recordString(record, "fingerprint");
+                        var uid = recordString(record, "uid");
+                        if (character == null || fingerprint == null || uid == null || slot < 0)
+                            continue;
+                        if (container != "inventory" && container != "bank" && container != "equipment")
+                            continue;
+                        lockRecords.push({
+                            character: character,
+                            container: container,
+                            slot: slot,
+                            fingerprint: fingerprint,
+                            uid: uid,
+                            validated: false,
+                            pending: 0
+                        });
+                    }
+                }
+            }
         } catch (_:Dynamic) {}
     }
 
     static function saveConfig():Void {
+        var savedLocks:Array<Dynamic> = [];
+        for (record in lockRecords) {
+            savedLocks.push({
+                character: recordString(record, "character"),
+                container: recordString(record, "container"),
+                slot: recordInt(record, "slot", -1),
+                fingerprint: recordString(record, "fingerprint"),
+                uid: recordString(record, "uid")
+            });
+        }
         try File.saveContent(CONFIG_PATH, Json.stringify({
             enabled: enabled.get(),
             showDepositMaterials: showDepositMaterials.get(),
@@ -807,7 +1413,8 @@ class ItemUtilitiesMod {
             hotkeyShift: hotkeyShift,
             hotkeyAlt: hotkeyAlt,
             hotkeySuper: hotkeySuper,
-            hasSeenMenu: hasSeenMenu
+            hasSeenMenu: hasSeenMenu,
+            itemLocks: savedLocks
         }, null, "  ")) catch (_:Dynamic) {}
     }
 }
