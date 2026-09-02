@@ -15,7 +15,6 @@ class ItemUtilitiesMod {
     static var enabled = new BoolRef(true);
     static var showDepositMaterials = new BoolRef(true);
     static var settingsOpen = new BoolRef(true);
-    static var bankPanelOpen = new BoolRef(true);
     static var hasSeenMenu:Bool = false;
 
     static var hotkeyKey:Int = ImGuiKey.F9;
@@ -26,6 +25,7 @@ class ItemUtilitiesMod {
     static var capturingHotkey:Bool = false;
 
     static var activeBankWindow:Dynamic;
+    static var depositButton:Dynamic;
     static var sourceInventory:Dynamic;
     static var bankInventory:Dynamic;
     static var depositing:Bool = false;
@@ -34,16 +34,24 @@ class ItemUtilitiesMod {
     static var status:String = "";
     static var movedStacks:Int = 0;
 
-    static var baseElementType:hl.Bytes;
     static var itemType:hl.Bytes;
     static var inventoryType:hl.Bytes;
-    static var getMyHeroMember:hlx.runtime.ResolvedMember;
+    static var propertiesType:hl.Bytes;
+    static var uiElementType:hl.Bytes;
+    static var h2dObjectType:hl.Bytes;
     static var isTypeMember:hlx.runtime.ResolvedMember;
     static var equalsMember:hlx.runtime.ResolvedMember;
     static var isMaxStackMember:hlx.runtime.ResolvedMember;
     static var getSlotStackSizeMember:hlx.runtime.ResolvedMember;
     static var getNextFreeIndexMember:hlx.runtime.ResolvedMember;
     static var requestTransferMember:hlx.runtime.ResolvedMember;
+    static var createNewMember:hlx.runtime.ResolvedMember;
+    static var getParentPropertiesMember:hlx.runtime.ResolvedMember;
+    static var setOnClickMember:hlx.runtime.ResolvedMember;
+    static var setTextTipMember:hlx.runtime.ResolvedMember;
+    static var setVisibleMember:hlx.runtime.ResolvedMember;
+    static var getChildIndexMember:hlx.runtime.ResolvedMember;
+    static var addChildAtMember:hlx.runtime.ResolvedMember;
 
     static function main():Void {
         loadConfig();
@@ -54,10 +62,11 @@ class ItemUtilitiesMod {
     @:hlx.postfix(ui.win.BankWindow.init)
     static function afterBankInit(instance:Dynamic, result:Void):Void {
         activeBankWindow = instance;
-        bankPanelOpen.set(true);
+        depositButton = null;
         status = "";
         cancelDeposit();
         refreshInventories();
+        installDepositButton();
     }
 
     @:hlx.postfix(ui.win.TitleWindow.onRemove)
@@ -66,6 +75,7 @@ class ItemUtilitiesMod {
             return;
         cancelDeposit();
         activeBankWindow = null;
+        depositButton = null;
         sourceInventory = null;
         bankInventory = null;
     }
@@ -77,8 +87,6 @@ class ItemUtilitiesMod {
         if (settingsOpen.get())
             drawSettings();
 
-        if (activeBankWindow != null && enabled.get() && showDepositMaterials.get())
-            drawBankUtilities();
     }
 
     static function drawSettings():Void {
@@ -97,6 +105,7 @@ class ItemUtilitiesMod {
         ImGui.checkbox("Enable item utilities", enabled);
         if (enabled.get() != oldEnabled) {
             if (!enabled.get()) cancelDeposit();
+            syncDepositButtonVisibility();
             saveConfig();
         }
 
@@ -104,6 +113,7 @@ class ItemUtilitiesMod {
         ImGui.checkbox("Show Deposit Crafting Materials button", showDepositMaterials);
         if (showDepositMaterials.get() != oldDeposit) {
             if (!showDepositMaterials.get()) cancelDeposit();
+            syncDepositButtonVisibility();
             saveConfig();
         }
 
@@ -117,29 +127,6 @@ class ItemUtilitiesMod {
             ImGui.text("Hold Ctrl/Shift/Alt/Win, then press a key. Esc cancels.");
             captureNextHotkey();
         }
-
-        ImGui.end();
-    }
-
-    static function drawBankUtilities():Void {
-        if (!bankPanelOpen.get())
-            return;
-
-        ImGui.setNextWindowBgAlpha(0.98);
-        if (!ImGui.begin("Bank Utilities##item-utilities-bank", bankPanelOpen)) {
-            ImGui.end();
-            return;
-        }
-
-        if (!depositing) {
-            if (ImGui.button("Deposit Crafting Materials"))
-                beginDeposit();
-        } else {
-            ImGui.text("Depositing crafting materials...");
-        }
-
-        if (status.length > 0)
-            ImGui.text(status);
 
         ImGui.end();
     }
@@ -287,13 +274,16 @@ class ItemUtilitiesMod {
     }
 
     static function refreshInventories():Bool {
-        if (activeBankWindow == null || !resolveMembers())
+        if (activeBankWindow == null)
             return false;
         try {
-            var hero:Dynamic = HlxRuntime.callResolved(getMyHeroMember, [activeBankWindow]);
+            // InventoryWindow.init stores the exact live bank inventory directly
+            // on the BankWindow. Its owner is the hero, so this avoids relying on
+            // the inherited get_myHero method being reflectable through HLX.
+            bankInventory = HlxRuntime.resolveField(activeBankWindow, "inventory");
+            var hero:Dynamic = bankInventory == null ? null : HlxRuntime.resolveField(bankInventory, "owner");
             var loadout:Dynamic = hero == null ? null : HlxRuntime.resolveField(hero, "loadout");
             sourceInventory = loadout == null ? null : HlxRuntime.resolveField(loadout, "inventory");
-            bankInventory = loadout == null ? null : HlxRuntime.resolveField(loadout, "bank");
         } catch (_:Dynamic) {
             sourceInventory = null;
             bankInventory = null;
@@ -308,13 +298,11 @@ class ItemUtilitiesMod {
     }
 
     static function resolveMembers():Bool {
-        if (baseElementType == null) baseElementType = HlxRuntime.resolveType("ui.BaseElement");
         if (itemType == null) itemType = HlxRuntime.resolveType("st.Item");
         if (inventoryType == null) inventoryType = HlxRuntime.resolveType("st.Inventory");
-        if (baseElementType == null || itemType == null || inventoryType == null)
+        if (itemType == null || inventoryType == null)
             return false;
 
-        if (getMyHeroMember == null) getMyHeroMember = HlxRuntime.resolveMember(baseElementType, "get_myHero");
         if (isTypeMember == null) isTypeMember = HlxRuntime.resolveMember(itemType, "isType");
         if (equalsMember == null) equalsMember = HlxRuntime.resolveMember(itemType, "equals");
         if (isMaxStackMember == null) isMaxStackMember = HlxRuntime.resolveMember(inventoryType, "isMaxStack");
@@ -322,9 +310,81 @@ class ItemUtilitiesMod {
         if (getNextFreeIndexMember == null) getNextFreeIndexMember = HlxRuntime.resolveMember(inventoryType, "getNextFreeIndex");
         if (requestTransferMember == null) requestTransferMember = HlxRuntime.resolveMember(inventoryType, "requestTransfer");
 
-        return getMyHeroMember != null && isTypeMember != null && equalsMember != null
+        return isTypeMember != null && equalsMember != null
             && isMaxStackMember != null && getSlotStackSizeMember != null
             && getNextFreeIndexMember != null && requestTransferMember != null;
+    }
+
+    static function installDepositButton():Void {
+        try {
+            if (!resolveUiMembers())
+                return;
+
+            var inventoryComp:Dynamic = HlxRuntime.resolveField(activeBankWindow, "comp");
+            var sortButton:Dynamic = inventoryComp == null ? null : HlxRuntime.resolveField(inventoryComp, "sortButton");
+            var sortProperties:Dynamic = sortButton == null ? null : HlxRuntime.resolveField(sortButton, "dom");
+            if (sortProperties == null)
+                return;
+
+            var parentProperties:Dynamic = HlxRuntime.callResolved(getParentPropertiesMember, [sortProperties]);
+            if (parentProperties == null)
+                return;
+
+            var createdProperties:Dynamic = HlxRuntime.callResolved(createNewMember, [
+                "button-icon",
+                parentProperties,
+                ["Item_Transfer"],
+                { id: "depositCraftingMaterials" }
+            ]);
+            if (createdProperties == null)
+                return;
+
+            depositButton = HlxRuntime.resolveField(createdProperties, "obj");
+            if (depositButton == null)
+                return;
+
+            HlxRuntime.callResolved(setOnClickMember, [depositButton, beginDeposit]);
+            HlxRuntime.callResolved(setTextTipMember, [depositButton, "Deposit Crafting Materials"]);
+
+            // Domkit appends new components. Move ours immediately after Sort so
+            // it behaves like a native part of the inventory header.
+            var parentObject:Dynamic = HlxRuntime.resolveField(parentProperties, "obj");
+            if (parentObject != null) {
+                var sortIndex:Dynamic = HlxRuntime.callResolved(getChildIndexMember, [parentObject, sortButton]);
+                if (sortIndex != null && cast sortIndex >= 0)
+                    HlxRuntime.callResolved(addChildAtMember, [parentObject, depositButton, cast sortIndex + 1]);
+            }
+
+            syncDepositButtonVisibility();
+        } catch (_:Dynamic) {
+            depositButton = null;
+        }
+    }
+
+    static function syncDepositButtonVisibility():Void {
+        if (depositButton == null || !resolveUiMembers())
+            return;
+        try HlxRuntime.callResolved(setVisibleMember, [depositButton, enabled.get() && showDepositMaterials.get()]) catch (_:Dynamic) {}
+    }
+
+    static function resolveUiMembers():Bool {
+        if (propertiesType == null) propertiesType = HlxRuntime.resolveType("domkit.Properties");
+        if (uiElementType == null) uiElementType = HlxRuntime.resolveType("ui.UIElement");
+        if (h2dObjectType == null) h2dObjectType = HlxRuntime.resolveType("h2d.Object");
+        if (propertiesType == null || uiElementType == null || h2dObjectType == null)
+            return false;
+
+        if (createNewMember == null) createNewMember = HlxRuntime.resolveStaticMember(propertiesType, "createNew");
+        if (getParentPropertiesMember == null) getParentPropertiesMember = HlxRuntime.resolveMember(propertiesType, "get_parent");
+        if (setOnClickMember == null) setOnClickMember = HlxRuntime.resolveMember(uiElementType, "set_onClick");
+        if (setTextTipMember == null) setTextTipMember = HlxRuntime.resolveMember(uiElementType, "set_textTip");
+        if (setVisibleMember == null) setVisibleMember = HlxRuntime.resolveMember(h2dObjectType, "set_visible");
+        if (getChildIndexMember == null) getChildIndexMember = HlxRuntime.resolveMember(h2dObjectType, "getChildIndex");
+        if (addChildAtMember == null) addChildAtMember = HlxRuntime.resolveMember(h2dObjectType, "addChildAt");
+
+        return createNewMember != null && getParentPropertiesMember != null
+            && setOnClickMember != null && setTextTipMember != null && setVisibleMember != null
+            && getChildIndexMember != null && addChildAtMember != null;
     }
 
     static function cancelDeposit():Void {
@@ -428,4 +488,3 @@ class ItemUtilitiesMod {
         }, null, "  ")) catch (_:Dynamic) {}
     }
 }
-
