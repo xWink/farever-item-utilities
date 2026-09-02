@@ -203,10 +203,10 @@ class ItemUtilitiesMod {
             | ImGuiWindowFlags.NoFocusOnAppearing;
         ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, new ImVec2(0, 0));
         ImGui.pushStyleVar(ImGuiStyleVar.FrameRounding, 5.0);
-        ImGui.pushStyleColor(ImGuiCol.Button, new ImVec4(0.91, 0.82, 0.77, 1));
-        ImGui.pushStyleColor(ImGuiCol.ButtonHovered, new ImVec4(0.98, 0.90, 0.84, 1));
-        ImGui.pushStyleColor(ImGuiCol.ButtonActive, new ImVec4(0.78, 0.66, 0.60, 1));
-        ImGui.pushStyleColor(ImGuiCol.Text, new ImVec4(0.34, 0.30, 0.28, 1));
+        ImGui.pushStyleColor(ImGuiCol.Button, new ImVec4(0.40, 0.37, 0.35, 1));
+        ImGui.pushStyleColor(ImGuiCol.ButtonHovered, new ImVec4(0.48, 0.44, 0.41, 1));
+        ImGui.pushStyleColor(ImGuiCol.ButtonActive, new ImVec4(0.32, 0.29, 0.27, 1));
+        ImGui.pushStyleColor(ImGuiCol.Text, new ImVec4(0.92, 0.86, 0.80, 1));
         if (!ImGui.begin("##item-utilities-bank-header", null, flags)) {
             ImGui.end();
             ImGui.popStyleColor(4);
@@ -214,8 +214,9 @@ class ItemUtilitiesMod {
             return;
         }
 
-        if (ImGui.button(depositing ? "...##deposit-materials" : ">>##deposit-materials", new ImVec2(32, 30)))
+        if (ImGui.button("##deposit-materials", new ImVec2(32, 30)))
             if (!depositing) beginDeposit();
+        drawDepositIcon();
         if (ImGui.isItemHovered())
             ImGui.setTooltip(status.length > 0 ? status : "Deposit Crafting Materials");
 
@@ -224,11 +225,46 @@ class ItemUtilitiesMod {
         ImGui.popStyleVar(2);
     }
 
+    static function drawDepositIcon():Void {
+        var min = ImGui.getItemRectMin();
+        var drawList = ImGui.getWindowDrawList();
+        var crystal = ImGui.colorConvertFloat4ToU32(new ImVec4(0.91, 0.70, 0.39, 1));
+        var crystalShade = ImGui.colorConvertFloat4ToU32(new ImVec4(0.72, 0.48, 0.25, 1));
+        var mark = ImGui.colorConvertFloat4ToU32(new ImVec4(0.94, 0.89, 0.83, 1));
+
+        // A small crafting crystal.
+        ImGui.ImDrawList_AddQuadFilled(drawList,
+            new ImVec2(min.x + 6, min.y + 10),
+            new ImVec2(min.x + 11, min.y + 5),
+            new ImVec2(min.x + 16, min.y + 10),
+            new ImVec2(min.x + 11, min.y + 17), crystal);
+        ImGui.ImDrawList_AddTriangleFilled(drawList,
+            new ImVec2(min.x + 6, min.y + 10),
+            new ImVec2(min.x + 11, min.y + 17),
+            new ImVec2(min.x + 11, min.y + 10), crystalShade);
+
+        // Down arrow and receiving tray communicate "deposit" at a glance.
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 21, min.y + 6),
+            new ImVec2(min.x + 21, min.y + 16), mark, 2.0);
+        ImGui.ImDrawList_AddTriangleFilled(drawList,
+            new ImVec2(min.x + 17, min.y + 14),
+            new ImVec2(min.x + 25, min.y + 14),
+            new ImVec2(min.x + 21, min.y + 19), mark);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 8, min.y + 23),
+            new ImVec2(min.x + 25, min.y + 23), mark, 2.0);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 8, min.y + 19),
+            new ImVec2(min.x + 8, min.y + 23), mark, 2.0);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 25, min.y + 19),
+            new ImVec2(min.x + 25, min.y + 23), mark, 2.0);
+    }
+
     static function beginDeposit():Void {
-        traceInventoryState("deposit clicked");
         if (!refreshInventories() || !resolveMembers()) {
             status = "Inventory is not ready.";
-            traceInventoryState("inventory resolution failed");
             return;
         }
 
@@ -237,10 +273,6 @@ class ItemUtilitiesMod {
         movedStacks = 0;
 
         var content = getContent(sourceInventory);
-        trace("[ItemUtilities] slot arrays: source=" + (content != null)
-            + " length=" + arrayLength(content)
-            + ", bank=" + (getContent(bankInventory) != null)
-            + " length=" + arrayLength(getContent(bankInventory)));
         if (content == null) {
             status = "Inventory is not ready.";
             return;
@@ -403,27 +435,10 @@ class ItemUtilitiesMod {
             var hero:Dynamic = HlxRuntime.callResolved(getMyHeroMember, [activeBankWindow]);
             var loadout:Dynamic = hero == null ? null : HlxRuntime.resolveField(hero, "loadout");
             var inventory:Dynamic = loadout == null ? null : HlxRuntime.resolveField(loadout, "inventory");
-            trace("[ItemUtilities] hero fallback: hero=" + (hero != null)
-                + ", loadout=" + (loadout != null) + ", inventory=" + (inventory != null));
             return inventory;
         } catch (error:Dynamic) {
             trace("[ItemUtilities] hero fallback failed: " + Std.string(error));
             return null;
-        }
-    }
-
-    static function traceInventoryState(reason:String):Void {
-        trace("[ItemUtilities] " + reason + ": bankWindow=" + (activeBankWindow != null)
-            + ", bankInventory=" + (bankInventory != null)
-            + ", sourceInventory=" + (sourceInventory != null)
-            + ", observedWindows=" + openInventoryWindows.length);
-        for (index in 0...openInventoryWindows.length) {
-            var entry = openInventoryWindows[index];
-            var iconId = "<unavailable>";
-            try iconId = Std.string(HlxRuntime.resolveField(entry.window, "iconId")) catch (_:Dynamic) {}
-            trace("[ItemUtilities] observed[" + index + "]: iconId=" + iconId
-                + ", isBankWindow=" + (entry.window == activeBankWindow)
-                + ", isBankInventory=" + (entry.inventory == bankInventory));
         }
     }
 
