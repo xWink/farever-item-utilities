@@ -2,8 +2,8 @@ package itemutilities;
 
 import haxe.Json;
 import imgui.ImGui;
-import imgui.ImVec2;
-import imgui.ImVec4;
+import imgui.Structs.ImVec2;
+import imgui.Structs.ImVec4;
 import imgui.Enums.ImGuiCol;
 import imgui.Enums.ImGuiKey;
 import imgui.Enums.ImGuiStyleVar;
