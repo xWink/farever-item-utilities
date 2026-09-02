@@ -235,6 +235,8 @@ class ItemUtilitiesMod {
         movedStacks = 0;
 
         var content = getContent(sourceInventory);
+        trace("[ItemUtilities] slot arrays: source=" + (content != null)
+            + ", bank=" + (getContent(bankInventory) != null));
         if (content == null) {
             status = "Inventory is not ready.";
             return;
@@ -436,7 +438,20 @@ class ItemUtilitiesMod {
     static function getContent(inventory:Dynamic):Array<Dynamic> {
         if (inventory == null)
             return null;
-        try return cast HlxRuntime.resolveField(inventory, "content") catch (_:Dynamic) return null;
+        try {
+            // `content` is the authoritative replicated array, but Farever can
+            // leave it null on the client while exposing the materialized slot
+            // array through `stacks`.
+            var content:Dynamic = HlxRuntime.resolveField(inventory, "content");
+            if (content != null)
+                return cast content;
+            var stacks:Dynamic = HlxRuntime.resolveField(inventory, "stacks");
+            if (stacks != null)
+                return cast stacks;
+        } catch (error:Dynamic) {
+            trace("[ItemUtilities] inventory slot access failed: " + Std.string(error));
+        }
+        return null;
     }
 
     static function resolveMembers():Bool {
