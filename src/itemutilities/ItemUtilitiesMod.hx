@@ -58,8 +58,9 @@ class ItemUtilitiesMod {
     static var requestTransferMember:hlx.runtime.ResolvedMember;
     static var getMyHeroMember:hlx.runtime.ResolvedMember;
     static var arrayGetDynMember:hlx.runtime.ResolvedMember;
-    static var setSystemCursorMember:hlx.runtime.ResolvedMember;
+    static var setSystemCursorFn:Dynamic;
     static var buttonCursor:Dynamic;
+    static var cursorResolutionAttempted:Bool = false;
     static var cursorErrorLogged:Bool = false;
     static var createNewMember:hlx.runtime.ResolvedMember;
     static var getParentPropertiesMember:hlx.runtime.ResolvedMember;
@@ -279,10 +280,12 @@ class ItemUtilitiesMod {
                 return;
             if (buttonCursor == null)
                 buttonCursor = HlxRuntime.constructEnum(cursorType, "Button", []);
-            if (setSystemCursorMember == null)
-                setSystemCursorMember = HlxRuntime.resolveStaticMember(systemType, "setCursor");
-            if (buttonCursor != null && setSystemCursorMember != null)
-                HlxRuntime.callResolved(setSystemCursorMember, [buttonCursor]);
+            if (!cursorResolutionAttempted) {
+                cursorResolutionAttempted = true;
+                setSystemCursorFn = HlxRuntime.resolveStaticField(systemType, "setCursor");
+            }
+            if (buttonCursor != null && setSystemCursorFn != null)
+                Reflect.callMethod(null, setSystemCursorFn, [buttonCursor]);
         } catch (error:Dynamic) {
             if (!cursorErrorLogged) {
                 cursorErrorLogged = true;
