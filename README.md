@@ -4,7 +4,7 @@ An extensible collection of inventory, bank, and equipment quality-of-life tools
 
 ## Current features
 
-- Adds a **Deposit Crafting Materials** button while the bank is open.
+- Adds a native **Deposit Crafting Materials** button beside Farever's Sort button while the bank is open.
 - Deposits every `CraftingComponent` item from the character inventory, including inherited material types such as Ore, Leather, and Cloth.
 - Uses Farever's normal server-validated transfer requests and processes transfers sequentially.
 - Stops safely if the bank is full or a transfer is rejected.
@@ -28,4 +28,3 @@ haxe compile.hxml
 ```
 
 The compiled mod is written to `build/item-utilities/item-utilities.hl`.
-
