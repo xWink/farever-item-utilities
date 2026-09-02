@@ -11,6 +11,7 @@ import imgui.Enums.ImGuiWindowFlags;
 import imgui.ref.BoolRef;
 import sys.FileSystem;
 import sys.io.File;
+import hlx.runtime.HlxPrefixControl;
 import hlx.runtime.HlxPrefixResult;
 
 @:build(hlx.runtime.Mod.build())
@@ -31,6 +32,7 @@ class ItemUtilitiesMod {
     static var capturingHotkey:Bool = false;
 
     static var activeBankWindow:Dynamic;
+    static var activeInventoryUI:Dynamic;
     static var activeInventoryWindow:Dynamic;
     static var openInventoryWindows:Array<{ window:Dynamic, inventory:Dynamic }> = [];
     static var depositButton:Dynamic;
@@ -74,6 +76,8 @@ class ItemUtilitiesMod {
     static var inventorySlotType:hl.Bytes;
     static var getInventoryWindowHeroMember:hlx.runtime.ResolvedMember;
     static var setSlotLockedMember:hlx.runtime.ResolvedMember;
+    static var eReasonType:hl.Bytes;
+    static var lockedItemReason:Dynamic;
 
     // Item __uid values are hxbit object identities. Farever clones an item
     // during most transfers, so a lock record follows a disappearing UID to
@@ -128,6 +132,17 @@ class ItemUtilitiesMod {
         } catch (_:Dynamic) {}
     }
 
+    @:hlx.postfix(ui.win.InventoryUI.init)
+    static function afterPlayerInventoryInit(instance:Dynamic, result:Void):Void {
+        activeInventoryUI = instance;
+        var comp = fieldOrNull(instance, "inventoryComp");
+        var inventory = fieldOrNull(comp, "inventory");
+        if (comp != null)
+            playerInventoryComp = comp;
+        if (inventory != null)
+            sourceInventory = inventory;
+    }
+
     @:hlx.postfix(ui.win.InventoryComp.init)
     static function afterInventoryCompInit(instance:Dynamic, result:Void):Void {
         var inventory = fieldOrNull(instance, "inventory");
@@ -177,6 +192,14 @@ class ItemUtilitiesMod {
         return isItemLocked(item) ? SkipWith(false) : Continue;
     }
 
+    // CharacterUI uses checkCompleteItem to decide whether an item can be
+    // placed into the Spark Recycler.
+    @:hlx.prefix(st.Loadout.checkCompleteItem)
+    static function preventLockedRecyclerSelection(instance:Dynamic,
+        item:Dynamic):HlxPrefixResult<Dynamic> {
+        return isItemLocked(item) ? SkipWith(getLockedItemReason()) : Continue;
+    }
+
     @:hlx.prefix(st.Loadout.completeItem)
     static function preventLockedRecycleRequest(instance:Dynamic, item:Dynamic,
         callback:Dynamic):HlxPrefixResult<Dynamic> {
@@ -184,6 +207,13 @@ class ItemUtilitiesMod {
             return Continue;
         rejectActionCallback(callback);
         return SkipWith(null);
+    }
+
+    // The Spark Recycler submits through this hxbit request directly.
+    @:hlx.prefix(st.Loadout.requestCompleteItem)
+    static function preventLockedRecyclerRequest(instance:Dynamic,
+        item:Dynamic):HlxPrefixControl {
+        return isItemLocked(item) ? Skip : Continue;
     }
 
     @:hlx.prefix(st.Inventory.canRequestDropIndex)
@@ -209,6 +239,18 @@ class ItemUtilitiesMod {
             try Reflect.callMethod(null, callback, [false]) catch (_:Dynamic) {}
     }
 
+    static function getLockedItemReason():Dynamic {
+        if (lockedItemReason != null)
+            return lockedItemReason;
+        try {
+            if (eReasonType == null)
+                eReasonType = HlxRuntime.resolveType("EReason");
+            if (eReasonType != null)
+                lockedItemReason = HlxRuntime.constructEnum(eReasonType, "Custom", ["Item is locked"]);
+        } catch (error:Dynamic) logLockError("locked reason", error);
+        return lockedItemReason;
+    }
+
     @:hlx.postfix(ui.win.TitleWindow.onRemove)
     static function afterTitleWindowRemove(instance:Dynamic, result:Void):Void {
         var kept:Array<{ window:Dynamic, inventory:Dynamic }> = [];
@@ -219,6 +261,10 @@ class ItemUtilitiesMod {
         if (instance == activeInventoryWindow) {
             activeInventoryWindow = null;
             sourceInventory = null;
+            playerInventoryComp = null;
+        }
+        if (instance == activeInventoryUI) {
+            activeInventoryUI = null;
             playerInventoryComp = null;
         }
         if (instance == activeBankWindow) {
@@ -351,7 +397,8 @@ class ItemUtilitiesMod {
     }
 
     static function drawLockHeaderButton():Void {
-        if (playerInventoryComp == null)
+        if (activeInventoryUI == null || !isUiVisible(activeInventoryUI)
+            || playerInventoryComp == null)
             return;
         var sortButton = fieldOrNull(playerInventoryComp, "sortButton");
         if (sortButton == null)
@@ -719,6 +766,15 @@ class ItemUtilitiesMod {
         if (sourceInventory == null)
             return;
 
+        if (activeInventoryUI != null) {
+            var inventoryUiComp = fieldOrNull(activeInventoryUI, "inventoryComp");
+            if (inventoryUiComp != null
+                && fieldOrNull(inventoryUiComp, "inventory") == sourceInventory) {
+                playerInventoryComp = inventoryUiComp;
+                return;
+            }
+        }
+
         // InventoryWindow.init creates and assigns its `comp` before this
         // mod's postfix runs. Prefer that direct reference: InventoryComp.init
         // is not reliably dispatched by every HLX/Farever build.
@@ -736,6 +792,14 @@ class ItemUtilitiesMod {
                 return;
             }
         }
+    }
+
+    static function isUiVisible(object:Dynamic):Bool {
+        if (object == null || fieldOrNull(object, "visible") == false)
+            return false;
+        // A closed TitleWindow is detached from the scene even if its local
+        // visible flag remains true.
+        return fieldOrNull(object, "parent") != null;
     }
 
     static function registerSlot(slot:Dynamic):Void {
