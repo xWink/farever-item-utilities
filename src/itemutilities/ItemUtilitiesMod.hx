@@ -44,6 +44,7 @@ class ItemUtilitiesMod {
     static var itemType:hl.Bytes;
     static var inventoryType:hl.Bytes;
     static var bankWindowType:hl.Bytes;
+    static var arrayObjType:hl.Bytes;
     static var propertiesType:hl.Bytes;
     static var uiElementType:hl.Bytes;
     static var h2dObjectType:hl.Bytes;
@@ -54,6 +55,7 @@ class ItemUtilitiesMod {
     static var getNextFreeIndexMember:hlx.runtime.ResolvedMember;
     static var requestTransferMember:hlx.runtime.ResolvedMember;
     static var getMyHeroMember:hlx.runtime.ResolvedMember;
+    static var arrayGetDynMember:hlx.runtime.ResolvedMember;
     static var createNewMember:hlx.runtime.ResolvedMember;
     static var getParentPropertiesMember:hlx.runtime.ResolvedMember;
     static var setOnClickMember:hlx.runtime.ResolvedMember;
@@ -236,14 +238,16 @@ class ItemUtilitiesMod {
 
         var content = getContent(sourceInventory);
         trace("[ItemUtilities] slot arrays: source=" + (content != null)
-            + ", bank=" + (getContent(bankInventory) != null));
+            + " length=" + arrayLength(content)
+            + ", bank=" + (getContent(bankInventory) != null)
+            + " length=" + arrayLength(getContent(bankInventory)));
         if (content == null) {
             status = "Inventory is not ready.";
             return;
         }
 
-        for (index in 0...content.length) {
-            var stack:Dynamic = content[index];
+        for (index in 0...arrayLength(content)) {
+            var stack:Dynamic = arrayGet(content, index);
             if (stack == null)
                 continue;
             var item:Dynamic = HlxRuntime.resolveField(stack, "item");
@@ -270,7 +274,7 @@ class ItemUtilitiesMod {
         var content = getContent(sourceInventory);
         while (transferPosition < transferIndexes.length) {
             var sourceIndex = transferIndexes[transferPosition];
-            var stack:Dynamic = content == null || sourceIndex >= content.length ? null : content[sourceIndex];
+            var stack:Dynamic = content == null || sourceIndex >= arrayLength(content) ? null : arrayGet(content, sourceIndex);
             if (stack == null) {
                 transferPosition++;
                 continue;
@@ -303,7 +307,7 @@ class ItemUtilitiesMod {
                 // A partially filled bank stack may not consume the whole source
                 // stack. Retry this source slot until it is empty, then advance.
                 var current = getContent(sourceInventory);
-                var remaining:Dynamic = current == null || sourceIndex >= current.length ? null : current[sourceIndex];
+                var remaining:Dynamic = current == null || sourceIndex >= arrayLength(current) ? null : arrayGet(current, sourceIndex);
                 if (remaining == null)
                     transferPosition++;
                 transferNext();
@@ -333,8 +337,8 @@ class ItemUtilitiesMod {
     static function findDestination(item:Dynamic):{ index:Int, count:Dynamic } {
         var bankContent = getContent(bankInventory);
         if (bankContent != null) {
-            for (index in 0...bankContent.length) {
-                var stack:Dynamic = bankContent[index];
+            for (index in 0...arrayLength(bankContent)) {
+                var stack:Dynamic = arrayGet(bankContent, index);
                 if (stack == null)
                     continue;
                 var other:Dynamic = HlxRuntime.resolveField(stack, "item");
@@ -435,7 +439,7 @@ class ItemUtilitiesMod {
         }
     }
 
-    static function getContent(inventory:Dynamic):Array<Dynamic> {
+    static function getContent(inventory:Dynamic):Dynamic {
         if (inventory == null)
             return null;
         try {
@@ -444,14 +448,39 @@ class ItemUtilitiesMod {
             // array through `stacks`.
             var content:Dynamic = HlxRuntime.resolveField(inventory, "content");
             if (content != null)
-                return cast content;
+                return content;
             var stacks:Dynamic = HlxRuntime.resolveField(inventory, "stacks");
             if (stacks != null)
-                return cast stacks;
+                return stacks;
         } catch (error:Dynamic) {
             trace("[ItemUtilities] inventory slot access failed: " + Std.string(error));
         }
         return null;
+    }
+
+    static function arrayLength(array:Dynamic):Int {
+        if (array == null)
+            return 0;
+        try return cast HlxRuntime.resolveField(array, "length") catch (_:Dynamic) return 0;
+    }
+
+    static function arrayGet(array:Dynamic, index:Int):Dynamic {
+        if (array == null)
+            return null;
+        try {
+            if (arrayObjType == null)
+                arrayObjType = HlxRuntime.resolveType("hl.types.ArrayObj");
+            if (arrayObjType == null)
+                return null;
+            if (arrayGetDynMember == null)
+                arrayGetDynMember = HlxRuntime.resolveMember(arrayObjType, "getDyn");
+            if (arrayGetDynMember == null)
+                return null;
+            return HlxRuntime.callResolved(arrayGetDynMember, [array, index]);
+        } catch (error:Dynamic) {
+            trace("[ItemUtilities] typed array read failed at " + index + ": " + Std.string(error));
+            return null;
+        }
     }
 
     static function resolveMembers():Bool {
