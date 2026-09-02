@@ -31,6 +31,7 @@ class ItemUtilitiesMod {
 
     static var activeBankWindow:Dynamic;
     static var activeInventoryWindow:Dynamic;
+    static var openInventoryWindows:Array<{ window:Dynamic, inventory:Dynamic }> = [];
     static var depositButton:Dynamic;
     static var sourceInventory:Dynamic;
     static var bankInventory:Dynamic;
@@ -68,6 +69,7 @@ class ItemUtilitiesMod {
     @:hlx.postfix(ui.win.BankWindow.init)
     static function afterBankInit(instance:Dynamic, result:Void):Void {
         activeBankWindow = instance;
+        try bankInventory = HlxRuntime.resolveField(instance, "inventory") catch (_:Dynamic) {}
         depositButton = null;
         status = "";
         cancelDeposit();
@@ -77,20 +79,32 @@ class ItemUtilitiesMod {
     @:hlx.postfix(ui.win.InventoryWindow.init)
     static function afterInventoryInit(instance:Dynamic, result:Void):Void {
         try {
-            var iconId:Dynamic = HlxRuntime.resolveField(instance, "iconId");
             var inventory:Dynamic = HlxRuntime.resolveField(instance, "inventory");
-            if (iconId == "Bank") {
-                activeBankWindow = instance;
-                bankInventory = inventory;
-            } else if (iconId == "Inventory") {
-                activeInventoryWindow = instance;
-                sourceInventory = inventory;
+            if (inventory == null)
+                return;
+
+            var known = false;
+            for (entry in openInventoryWindows) {
+                if (entry.window == instance) {
+                    entry.inventory = inventory;
+                    known = true;
+                    break;
+                }
             }
+            if (!known)
+                openInventoryWindows.push({ window: instance, inventory: inventory });
+
+            selectSourceInventory();
         } catch (_:Dynamic) {}
     }
 
     @:hlx.postfix(ui.win.TitleWindow.onRemove)
     static function afterTitleWindowRemove(instance:Dynamic, result:Void):Void {
+        var kept:Array<{ window:Dynamic, inventory:Dynamic }> = [];
+        for (entry in openInventoryWindows)
+            if (entry.window != instance) kept.push(entry);
+        openInventoryWindows = kept;
+
         if (instance == activeInventoryWindow) {
             activeInventoryWindow = null;
             sourceInventory = null;
@@ -101,6 +115,7 @@ class ItemUtilitiesMod {
             depositButton = null;
             bankInventory = null;
         }
+        selectSourceInventory();
     }
 
     static function draw():Void {
@@ -353,12 +368,23 @@ class ItemUtilitiesMod {
         try {
             if (bankInventory == null)
                 bankInventory = HlxRuntime.resolveField(activeBankWindow, "inventory");
-            if (sourceInventory == null && activeInventoryWindow != null)
-                sourceInventory = HlxRuntime.resolveField(activeInventoryWindow, "inventory");
+            selectSourceInventory();
         } catch (_:Dynamic) {
             return false;
         }
         return sourceInventory != null && bankInventory != null;
+    }
+
+    static function selectSourceInventory():Void {
+        sourceInventory = null;
+        activeInventoryWindow = null;
+        for (entry in openInventoryWindows) {
+            if (entry.window == activeBankWindow || entry.inventory == bankInventory)
+                continue;
+            activeInventoryWindow = entry.window;
+            sourceInventory = entry.inventory;
+            return;
+        }
     }
 
     static function getContent(inventory:Dynamic):Array<Dynamic> {
