@@ -162,9 +162,28 @@ class ItemUtilitiesMod {
         return isItemLocked(item) ? SkipWith(false) : Continue;
     }
 
+    // MerchantUI calls sellItem directly, without consulting canSellItem.
+    @:hlx.prefix(st.Loadout.sellItem)
+    static function preventLockedSaleRequest(instance:Dynamic, item:Dynamic,
+        callback:Dynamic):HlxPrefixResult<Dynamic> {
+        if (!isItemLocked(item))
+            return Continue;
+        rejectActionCallback(callback);
+        return SkipWith(null);
+    }
+
     @:hlx.prefix(st.Loadout.canCompleteItem)
     static function preventLockedRecycle(instance:Dynamic, item:Dynamic):HlxPrefixResult<Bool> {
         return isItemLocked(item) ? SkipWith(false) : Continue;
+    }
+
+    @:hlx.prefix(st.Loadout.completeItem)
+    static function preventLockedRecycleRequest(instance:Dynamic, item:Dynamic,
+        callback:Dynamic):HlxPrefixResult<Dynamic> {
+        if (!isItemLocked(item))
+            return Continue;
+        rejectActionCallback(callback);
+        return SkipWith(null);
     }
 
     @:hlx.prefix(st.Inventory.canRequestDropIndex)
@@ -172,6 +191,22 @@ class ItemUtilitiesMod {
         force:hl.Ref<Bool>, unknown:Null<Int>):HlxPrefixResult<Bool> {
         var item = itemAt(instance, index);
         return isItemLocked(item) ? SkipWith(false) : Continue;
+    }
+
+    // InventorySlot's discard actions call requestDropIndex directly.
+    @:hlx.prefix(st.Inventory.requestDropIndex)
+    static function preventLockedDropRequest(instance:Dynamic, index:Int, count:Bool,
+        force:hl.Ref<Bool>, unknown:Null<Int>, callback:Dynamic):HlxPrefixResult<Dynamic> {
+        var item = itemAt(instance, index);
+        if (!isItemLocked(item))
+            return Continue;
+        rejectActionCallback(callback);
+        return SkipWith(null);
+    }
+
+    static function rejectActionCallback(callback:Dynamic):Void {
+        if (callback != null)
+            try Reflect.callMethod(null, callback, [false]) catch (_:Dynamic) {}
     }
 
     @:hlx.postfix(ui.win.TitleWindow.onRemove)
