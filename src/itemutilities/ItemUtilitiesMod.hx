@@ -324,28 +324,43 @@ class ItemUtilitiesMod {
     }
 
     @:hlx.prefix(st.Inventory.requestSort)
-    static function filterLockedItemsFromSort(instance:Dynamic, indexes:Array<Int>,
+    static function keepLockedItemsInPlaceDuringSort(instance:Dynamic, indexes:Array<Int>,
         callback:Dynamic):HlxPrefixResult<Dynamic> {
         if (!sortingIgnoresLockedItems.get() || instance != sourceInventory || indexes == null)
             return Continue;
 
-        var writeIndex = 0;
-        for (readIndex in 0...indexes.length) {
-            var itemIndex = indexes[readIndex];
-            if (isItemLocked(itemAt(instance, itemIndex)))
-                continue;
-            indexes[writeIndex] = itemIndex;
-            writeIndex++;
+        var lockedSources:Map<Int, Bool> = new Map();
+        var unlockedSorted:Array<Int> = [];
+        for (sourceIndex in indexes) {
+            if (isItemLocked(itemAt(instance, sourceIndex)))
+                lockedSources.set(sourceIndex, true);
+            else
+                unlockedSorted.push(sourceIndex);
         }
-        if (writeIndex == indexes.length)
-            return Continue;
-        indexes.resize(writeIndex);
-        if (writeIndex > 0)
+        if (lockedSources.keys().hasNext() == false)
             return Continue;
 
-        if (callback != null)
-            try Reflect.callMethod(null, callback, [true]) catch (_:Dynamic) {}
-        return SkipWith(null);
+        // requestSort requires a complete permutation. Preserve each locked
+        // destination by mapping that slot to itself, then fill every other
+        // destination with the game's already-sorted unlocked source indexes.
+        for (lockedIndex in lockedSources.keys()) {
+            if (lockedIndex < 0 || lockedIndex >= indexes.length) {
+                if (callback != null)
+                    try Reflect.callMethod(null, callback, [true]) catch (_:Dynamic) {}
+                return SkipWith(null);
+            }
+        }
+
+        var unlockedIndex = 0;
+        for (destinationIndex in 0...indexes.length) {
+            if (lockedSources.exists(destinationIndex))
+                indexes[destinationIndex] = destinationIndex;
+            else {
+                indexes[destinationIndex] = unlockedSorted[unlockedIndex];
+                unlockedIndex++;
+            }
+        }
+        return Continue;
     }
 
     @:hlx.postfix(ui.win.TitleWindow.onRemove)
