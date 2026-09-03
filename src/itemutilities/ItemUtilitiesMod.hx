@@ -620,25 +620,10 @@ class ItemUtilitiesMod {
             }
         } catch (_:Dynamic) return;
 
-        var controlsX = x + width + 10;
-        var flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
-            | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings
-            | ImGuiWindowFlags.NoFocusOnAppearing;
-
-        ImGui.setNextWindowPos(new ImVec2(controlsX, y - 23));
-        ImGui.setNextWindowBgAlpha(0);
-        ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, new ImVec2(0, 0));
-        ImGui.pushStyleColor(ImGuiCol.Text, new ImVec4(0.43, 0.31, 0.28, 1));
-        if (ImGui.begin("##item-utilities-weapon-presets-label", null,
-            flags | ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.NoInputs))
-            ImGui.text("Presets");
-        ImGui.end();
-        ImGui.popStyleColor();
-        ImGui.popStyleVar();
-
+        var controlsX = x + width + 32;
         ImGui.setNextWindowPos(new ImVec2(controlsX, y));
         ImGui.setNextWindowBgAlpha(0);
-        flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
+        var flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
             | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings
             | ImGuiWindowFlags.NoFocusOnAppearing;
         ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, new ImVec2(0, 0));
@@ -648,6 +633,18 @@ class ItemUtilitiesMod {
         ImGui.pushStyleColor(ImGuiCol.ButtonActive, new ImVec4(0.60, 0.48, 0.43, 1));
         ImGui.pushStyleColor(ImGuiCol.Text, new ImVec4(0.98, 0.93, 0.90, 1));
         if (ImGui.begin("##item-utilities-weapon-presets", null, flags)) {
+            ImGui.dummy(new ImVec2(56, height));
+            var titleMin = ImGui.getItemRectMin();
+            var titleColor = ImGui.colorConvertFloat4ToU32(
+                new ImVec4(0.43, 0.31, 0.28, 1));
+            var drawList = ImGui.getWindowDrawList();
+            var titleY = titleMin.y + (height - 14) * 0.5;
+            ImGui.ImDrawList_AddText_Vec2(drawList,
+                new ImVec2(titleMin.x, titleY), titleColor, "Presets");
+            ImGui.ImDrawList_AddText_Vec2(drawList,
+                new ImVec2(titleMin.x + 0.8, titleY), titleColor, "Presets");
+            ImGui.sameLine();
+
             for (preset in 0...3) {
                 if (preset > 0)
                     ImGui.sameLine();
