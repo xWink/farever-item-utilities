@@ -620,15 +620,31 @@ class ItemUtilitiesMod {
             }
         } catch (_:Dynamic) return;
 
-        ImGui.setNextWindowPos(new ImVec2(x + width + 10, y));
-        ImGui.setNextWindowBgAlpha(0);
+        var controlsX = x + width + 10;
         var flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
+            | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings
+            | ImGuiWindowFlags.NoFocusOnAppearing;
+
+        ImGui.setNextWindowPos(new ImVec2(controlsX, y - 23));
+        ImGui.setNextWindowBgAlpha(0);
+        ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, new ImVec2(0, 0));
+        ImGui.pushStyleColor(ImGuiCol.Text, new ImVec4(0.43, 0.31, 0.28, 1));
+        if (ImGui.begin("##item-utilities-weapon-presets-label", null,
+            flags | ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.NoInputs))
+            ImGui.text("Presets");
+        ImGui.end();
+        ImGui.popStyleColor();
+        ImGui.popStyleVar();
+
+        ImGui.setNextWindowPos(new ImVec2(controlsX, y));
+        ImGui.setNextWindowBgAlpha(0);
+        flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
             | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings
             | ImGuiWindowFlags.NoFocusOnAppearing;
         ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, new ImVec2(0, 0));
         ImGui.pushStyleVar(ImGuiStyleVar.FrameRounding, 6.0);
         ImGui.pushStyleColor(ImGuiCol.Button, new ImVec4(0.70, 0.59, 0.54, 1));
-        ImGui.pushStyleColor(ImGuiCol.ButtonHovered, new ImVec4(0.77, 0.65, 0.59, 1));
+        ImGui.pushStyleColor(ImGuiCol.ButtonHovered, new ImVec4(0.541, 0.373, 0.275, 1));
         ImGui.pushStyleColor(ImGuiCol.ButtonActive, new ImVec4(0.60, 0.48, 0.43, 1));
         ImGui.pushStyleColor(ImGuiCol.Text, new ImVec4(0.98, 0.93, 0.90, 1));
         if (ImGui.begin("##item-utilities-weapon-presets", null, flags)) {
@@ -638,31 +654,27 @@ class ItemUtilitiesMod {
                 var selected = selectedWeaponPreset == preset;
                 if (selected) {
                     ImGui.pushStyleColor(ImGuiCol.Button, new ImVec4(0.55, 0.39, 0.34, 1));
-                    ImGui.pushStyleColor(ImGuiCol.ButtonHovered, new ImVec4(0.63, 0.46, 0.40, 1));
+                    ImGui.pushStyleColor(ImGuiCol.ButtonHovered, new ImVec4(0.541, 0.373, 0.275, 1));
                     ImGui.pushStyleColor(ImGuiCol.ButtonActive, new ImVec4(0.47, 0.32, 0.28, 1));
                 }
                 if (ImGui.button(Std.string(preset + 1) + "##weapon-preset",
                     new ImVec2(height, height))) {
+                    playButtonClickSound(appearanceButton);
                     selectedWeaponPreset = preset;
                     activateWeaponPreset(preset);
                 }
                 if (selected)
                     ImGui.popStyleColor(3);
-                if (ImGui.isItemHovered()) {
+                if (ImGui.isItemHovered())
                     setGameButtonCursor();
-                    ImGui.setTooltip(hasWeaponPreset(preset)
-                        ? " Equip weapon preset " + (preset + 1) + " "
-                        : " Weapon preset " + (preset + 1) + " has not been set ");
-                }
             }
             ImGui.sameLine();
-            if (ImGui.button("Set##weapon-preset", new ImVec2(58, height)))
+            if (ImGui.button("Set##weapon-preset", new ImVec2(58, height))) {
+                playButtonClickSound(appearanceButton);
                 saveCurrentWeaponsToPreset(selectedWeaponPreset);
-            if (ImGui.isItemHovered()) {
-                setGameButtonCursor();
-                ImGui.setTooltip(" Save currently equipped weapons to preset "
-                    + (selectedWeaponPreset + 1) + " ");
             }
+            if (ImGui.isItemHovered())
+                setGameButtonCursor();
         }
         ImGui.end();
         ImGui.popStyleColor(4);
