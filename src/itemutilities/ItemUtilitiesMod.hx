@@ -1004,6 +1004,12 @@ class ItemUtilitiesMod {
                     || isSavedSlot(record, exact))) {
                 record.missing = 0;
                 record.restored = true;
+                // A split creates another item with the same fingerprint but
+                // leaves this source UID intact. Remember every identical UID
+                // seen while the lock identity is confirmed so the unlocked
+                // split-off stack cannot steal the lock when the source stack
+                // is moved and receives a replacement UID later.
+                record.known = matchingUids(current, exact.fingerprint);
                 if (updateRecordLocation(record, exact)) changed = true;
                 claimed.set(uid, true);
             }
