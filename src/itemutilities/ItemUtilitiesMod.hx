@@ -39,7 +39,7 @@ class ItemUtilitiesMod {
     static var sourceInventory:Dynamic;
     static var bankInventory:Dynamic;
     static var depositing:Bool = false;
-    static var depositAllMode:Bool = false;
+    static var depositMode:Int = 0;
     static var transferIndexes:Array<Int> = [];
     static var transferPosition:Int = 0;
     static var status:String = "";
@@ -102,6 +102,12 @@ class ItemUtilitiesMod {
     static inline var INVENTORY_SLOT_SIZE = 48.0;
     static inline var TOOLTIP_BUTTON_DELAY = 0.2;
     static inline var TOOLTIP_OVERLAP_INSET = 4.0;
+    static inline var DEPOSIT_CRAFTING = 0;
+    static inline var DEPOSIT_ALL = 1;
+    static inline var DEPOSIT_FOOD = 2;
+    static inline var DEPOSIT_CONSUMABLE = 3;
+    static inline var DEPOSIT_DEMON_ENCHANTMENT = 4;
+    static inline var DEPOSIT_MISC = 5;
 
     static function main():Void {
         loadConfig();
@@ -411,7 +417,7 @@ class ItemUtilitiesMod {
         }
 
         var oldDeposit = showDepositMaterials.get();
-        ImGui.checkbox("Show Deposit Crafting Components button", showDepositMaterials);
+        ImGui.checkbox("Show deposit buttons", showDepositMaterials);
         if (showDepositMaterials.get() != oldDeposit) {
             if (!showDepositMaterials.get()) cancelDeposit();
             syncDepositButtonVisibility();
@@ -450,12 +456,22 @@ class ItemUtilitiesMod {
             return;
         }
 
-        drawBankDepositButton(sortButton, x - 76, y, true);
-        drawBankDepositButton(sortButton, x - 38, y, false);
+        drawBankDepositButton(sortButton, x - 228, y, DEPOSIT_MISC,
+            "misc", " Deposit miscellaneous ");
+        drawBankDepositButton(sortButton, x - 190, y, DEPOSIT_DEMON_ENCHANTMENT,
+            "demon", " Deposit demon enchantment ");
+        drawBankDepositButton(sortButton, x - 152, y, DEPOSIT_CONSUMABLE,
+            "consumable", " Deposit consumable ");
+        drawBankDepositButton(sortButton, x - 114, y, DEPOSIT_FOOD,
+            "food", " Deposit food ");
+        drawBankDepositButton(sortButton, x - 76, y, DEPOSIT_CRAFTING,
+            "materials", " Deposit crafting components ");
+        drawBankDepositButton(sortButton, x - 38, y, DEPOSIT_ALL,
+            "all", " Deposit all ");
     }
 
     static function drawBankDepositButton(sortButton:Dynamic, x:Float, y:Float,
-        allItems:Bool):Void {
+        mode:Int, suffix:String, tooltip:String):Void {
         if (buttonCovered(x, y, 32, 30))
             return;
 
@@ -472,7 +488,6 @@ class ItemUtilitiesMod {
         ImGui.pushStyleColor(ImGuiCol.ButtonHovered, new ImVec4(0.48, 0.44, 0.41, 1));
         ImGui.pushStyleColor(ImGuiCol.ButtonActive, new ImVec4(0.32, 0.29, 0.27, 1));
         ImGui.pushStyleColor(ImGuiCol.Text, new ImVec4(0.92, 0.86, 0.80, 1));
-        var suffix = allItems ? "all" : "materials";
         if (!ImGui.begin("##item-utilities-bank-header-" + suffix, null, flags)) {
             ImGui.end();
             ImGui.popStyleColor(4);
@@ -482,20 +497,13 @@ class ItemUtilitiesMod {
 
         if (ImGui.button("##deposit-" + suffix, new ImVec2(32, 30))) {
             playButtonClickSound(sortButton);
-            if (!depositing) {
-                if (allItems)
-                    beginDepositAll();
-                else
-                    beginDeposit();
-            }
+            if (!depositing)
+                beginDepositMode(mode);
         }
-        if (allItems)
-            drawDepositAllIcon();
-        else
-            drawCraftingDepositIcon();
+        drawDepositModeIcon(mode);
         if (ImGui.isItemHovered()) {
             setGameButtonCursor();
-            ImGui.setTooltip(allItems ? " Deposit all " : " Deposit crafting components ");
+            ImGui.setTooltip(tooltip);
         }
 
         ImGui.end();
@@ -611,6 +619,17 @@ class ItemUtilitiesMod {
         }
     }
 
+    static function drawDepositModeIcon(mode:Int):Void {
+        switch (mode) {
+            case DEPOSIT_ALL: drawDepositAllIcon();
+            case DEPOSIT_FOOD: drawFoodDepositIcon();
+            case DEPOSIT_CONSUMABLE: drawConsumableDepositIcon();
+            case DEPOSIT_DEMON_ENCHANTMENT: drawDemonDepositIcon();
+            case DEPOSIT_MISC: drawMiscDepositIcon();
+            default: drawCraftingDepositIcon();
+        }
+    }
+
     static function drawCraftingDepositIcon():Void {
         var min = ImGui.getItemRectMin();
         var drawList = ImGui.getWindowDrawList();
@@ -628,6 +647,88 @@ class ItemUtilitiesMod {
             new ImVec2(min.x + 12, min.y + 11),
             new ImVec2(min.x + 8, min.y + 19), handle, 3.0);
 
+        drawDepositArrowAndBucket(min, drawList, mark);
+    }
+
+    static function drawFoodDepositIcon():Void {
+        var min = ImGui.getItemRectMin();
+        var drawList = ImGui.getWindowDrawList();
+        var food = ImGui.colorConvertFloat4ToU32(new ImVec4(0.86, 0.42, 0.30, 1));
+        var leaf = ImGui.colorConvertFloat4ToU32(new ImVec4(0.55, 0.76, 0.38, 1));
+        var mark = ImGui.colorConvertFloat4ToU32(new ImVec4(0.94, 0.89, 0.83, 1));
+
+        // Apple with a leaf.
+        ImGui.ImDrawList_AddCircleFilled(drawList,
+            new ImVec2(min.x + 11, min.y + 12), 5.5, food, 12);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 11, min.y + 7),
+            new ImVec2(min.x + 13, min.y + 4), leaf, 1.5);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 13, min.y + 5),
+            new ImVec2(min.x + 17, min.y + 6), leaf, 2.0);
+        drawDepositArrowAndBucket(min, drawList, mark);
+    }
+
+    static function drawConsumableDepositIcon():Void {
+        var min = ImGui.getItemRectMin();
+        var drawList = ImGui.getWindowDrawList();
+        var potion = ImGui.colorConvertFloat4ToU32(new ImVec4(0.55, 0.73, 0.92, 1));
+        var mark = ImGui.colorConvertFloat4ToU32(new ImVec4(0.94, 0.89, 0.83, 1));
+
+        // Small potion flask.
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 9, min.y + 5),
+            new ImVec2(min.x + 14, min.y + 5), potion, 2.0);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 10, min.y + 6),
+            new ImVec2(min.x + 10, min.y + 10), potion, 2.0);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 13, min.y + 6),
+            new ImVec2(min.x + 13, min.y + 10), potion, 2.0);
+        ImGui.ImDrawList_AddTriangleFilled(drawList,
+            new ImVec2(min.x + 10, min.y + 9),
+            new ImVec2(min.x + 5, min.y + 18),
+            new ImVec2(min.x + 16, min.y + 18), potion);
+        drawDepositArrowAndBucket(min, drawList, mark);
+    }
+
+    static function drawDemonDepositIcon():Void {
+        var min = ImGui.getItemRectMin();
+        var drawList = ImGui.getWindowDrawList();
+        var demon = ImGui.colorConvertFloat4ToU32(new ImVec4(0.76, 0.43, 0.86, 1));
+        var mark = ImGui.colorConvertFloat4ToU32(new ImVec4(0.94, 0.89, 0.83, 1));
+
+        // Gem flanked by two small horns.
+        ImGui.ImDrawList_AddQuadFilled(drawList,
+            new ImVec2(min.x + 11, min.y + 7),
+            new ImVec2(min.x + 16, min.y + 12),
+            new ImVec2(min.x + 11, min.y + 18),
+            new ImVec2(min.x + 6, min.y + 12), demon);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 7, min.y + 10),
+            new ImVec2(min.x + 4, min.y + 5), demon, 2.0);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 15, min.y + 10),
+            new ImVec2(min.x + 18, min.y + 5), demon, 2.0);
+        drawDepositArrowAndBucket(min, drawList, mark);
+    }
+
+    static function drawMiscDepositIcon():Void {
+        var min = ImGui.getItemRectMin();
+        var drawList = ImGui.getWindowDrawList();
+        var misc = ImGui.colorConvertFloat4ToU32(new ImVec4(0.77, 0.68, 0.53, 1));
+        var mark = ImGui.colorConvertFloat4ToU32(new ImVec4(0.94, 0.89, 0.83, 1));
+
+        // Three varied pieces represent miscellaneous items.
+        ImGui.ImDrawList_AddCircleFilled(drawList,
+            new ImVec2(min.x + 7, min.y + 8), 2.5, misc, 8);
+        ImGui.ImDrawList_AddRectFilled(drawList,
+            new ImVec2(min.x + 11, min.y + 6),
+            new ImVec2(min.x + 16, min.y + 11), misc, 1.0, 0);
+        ImGui.ImDrawList_AddTriangleFilled(drawList,
+            new ImVec2(min.x + 7, min.y + 13),
+            new ImVec2(min.x + 12, min.y + 18),
+            new ImVec2(min.x + 3, min.y + 18), misc);
         drawDepositArrowAndBucket(min, drawList, mark);
     }
 
@@ -701,20 +802,16 @@ class ItemUtilitiesMod {
     }
 
     static function beginDeposit():Void {
-        beginDepositMode(false);
+        beginDepositMode(DEPOSIT_CRAFTING);
     }
 
-    static function beginDepositAll():Void {
-        beginDepositMode(true);
-    }
-
-    static function beginDepositMode(allItems:Bool):Void {
+    static function beginDepositMode(mode:Int):Void {
         if (!refreshInventories() || !resolveMembers()) {
             status = "Inventory is not ready.";
             return;
         }
 
-        depositAllMode = allItems;
+        depositMode = mode;
         transferIndexes = [];
         transferPosition = 0;
         movedStacks = 0;
@@ -730,15 +827,12 @@ class ItemUtilitiesMod {
             if (stack == null)
                 continue;
             var item:Dynamic = HlxRuntime.resolveField(stack, "item");
-            if (item != null
-                && (depositAllMode ? !isItemLocked(item) : isCraftingComponent(item)))
+            if (item != null && matchesDepositMode(item))
                 transferIndexes.push(index);
         }
 
         if (transferIndexes.length == 0) {
-            status = depositAllMode
-                ? "No unlocked items to deposit."
-                : "No crafting components to deposit.";
+            status = "No matching unlocked items to deposit.";
             return;
         }
 
@@ -763,8 +857,7 @@ class ItemUtilitiesMod {
             }
 
             var item:Dynamic = HlxRuntime.resolveField(stack, "item");
-            if (item == null || (depositAllMode && isItemLocked(item))
-                || (!depositAllMode && !isCraftingComponent(item))) {
+            if (item == null || !matchesDepositMode(item)) {
                 transferPosition++;
                 continue;
             }
@@ -781,8 +874,7 @@ class ItemUtilitiesMod {
                 if (!depositing)
                     return;
                 if (!success) {
-                    // A locked crafting component is rejected by the transfer
-                    // guard. Skip that slot and keep depositing later items.
+                    // A rejected transfer must not abort the remaining batch.
                     transferPosition++;
                     transferNext();
                     return;
@@ -816,9 +908,7 @@ class ItemUtilitiesMod {
         }
 
         depositing = false;
-        status = depositAllMode
-            ? "Deposited all unlocked items."
-            : "Deposited available crafting components.";
+        status = "Deposited all matching unlocked items.";
     }
 
     static function findDestination(item:Dynamic):{ index:Int, count:Dynamic } {
@@ -850,10 +940,35 @@ class ItemUtilitiesMod {
     }
 
     static function isCraftingComponent(item:Dynamic):Bool {
+        return isItemType(item, CRAFTING_COMPONENT_TYPE);
+    }
+
+    static function matchesDepositMode(item:Dynamic):Bool {
+        if (item == null || isItemLocked(item))
+            return false;
+        return switch (depositMode) {
+            case DEPOSIT_ALL: true;
+            case DEPOSIT_FOOD: isItemType(item, "Food");
+            case DEPOSIT_CONSUMABLE:
+                isItemType(item, "Consumable") && !isItemType(item, "Food")
+                    && !isDemonEnchantment(item);
+            case DEPOSIT_DEMON_ENCHANTMENT: isDemonEnchantment(item);
+            case DEPOSIT_MISC:
+                isItemType(item, "Misc") && !isDemonEnchantment(item);
+            default: isCraftingComponent(item);
+        };
+    }
+
+    static function isDemonEnchantment(item:Dynamic):Bool {
+        return isItemType(item, "AugmentDemon")
+            || isItemType(item, "AugmentDemonSigil");
+    }
+
+    static function isItemType(item:Dynamic, type:String):Bool {
         if (item == null || isTypeMember == null)
             return false;
         try {
-            return HlxRuntime.callResolved(isTypeMember, [item, CRAFTING_COMPONENT_TYPE]) == true;
+            return HlxRuntime.callResolved(isTypeMember, [item, type]) == true;
         } catch (_:Dynamic) {
             return false;
         }
