@@ -673,7 +673,7 @@ class ItemUtilitiesMod {
         var characterId = heroPersistentId(hero);
         var loadout = fieldOrNull(hero, "loadout");
         var equipment = fieldOrNull(loadout, "equipment");
-        if (characterId == null || equipment == null)
+        if (characterId == null || equipment == null || !resolveMembers())
             return;
 
         var weapons:Array<Dynamic> = [];
@@ -710,7 +710,8 @@ class ItemUtilitiesMod {
         var loadout = fieldOrNull(hero, "loadout");
         var equipment = fieldOrNull(loadout, "equipment");
         var weapons:Array<Dynamic> = saved == null ? null : cast Reflect.field(saved, "weapons");
-        if (equipment == null || weapons == null || weapons.length == 0)
+        if (equipment == null || weapons == null || weapons.length == 0
+            || !resolveMembers())
             return;
 
         presetEquipQueue = weapons.copy();
