@@ -21,6 +21,7 @@ class ItemUtilitiesMod {
     static var enabled = new BoolRef(true);
     static var showDepositMaterials = new BoolRef(true);
     static var showLockVisuals = new BoolRef(true);
+    static var sortingIgnoresLockedItems = new BoolRef(false);
     static var settingsOpen = new BoolRef(true);
     static var hasSeenMenu:Bool = false;
     static var confirmDeleteLocks:Bool = false;
@@ -322,6 +323,31 @@ class ItemUtilitiesMod {
         return lockedItemReason;
     }
 
+    @:hlx.prefix(st.Inventory.requestSort)
+    static function filterLockedItemsFromSort(instance:Dynamic, indexes:Array<Int>,
+        callback:Dynamic):HlxPrefixResult<Dynamic> {
+        if (!sortingIgnoresLockedItems.get() || instance != sourceInventory || indexes == null)
+            return Continue;
+
+        var writeIndex = 0;
+        for (readIndex in 0...indexes.length) {
+            var itemIndex = indexes[readIndex];
+            if (isItemLocked(itemAt(instance, itemIndex)))
+                continue;
+            indexes[writeIndex] = itemIndex;
+            writeIndex++;
+        }
+        if (writeIndex == indexes.length)
+            return Continue;
+        indexes.resize(writeIndex);
+        if (writeIndex > 0)
+            return Continue;
+
+        if (callback != null)
+            try Reflect.callMethod(null, callback, [true]) catch (_:Dynamic) {}
+        return SkipWith(null);
+    }
+
     @:hlx.postfix(ui.win.TitleWindow.onRemove)
     static function afterTitleWindowRemove(instance:Dynamic, result:Void):Void {
         var kept:Array<{ window:Dynamic, inventory:Dynamic }> = [];
@@ -418,6 +444,13 @@ class ItemUtilitiesMod {
             }
             saveConfig();
         }
+
+        var oldSortIgnoresLocks = sortingIgnoresLockedItems.get();
+        ImGui.checkbox("Sorting ignores locked items", sortingIgnoresLockedItems);
+        if (ImGui.isItemHovered())
+            ImGui.setTooltip("Keeps locked items in place when sorting the character inventory.");
+        if (sortingIgnoresLockedItems.get() != oldSortIgnoresLocks)
+            saveConfig();
 
         if (!confirmDeleteLocks) {
             if (ImGui.button("Delete all saved locks"))
@@ -672,7 +705,7 @@ class ItemUtilitiesMod {
                     ImGui.ImDrawList_PushClipRect(drawList,
                         new ImVec2(viewport.left, viewport.top),
                         new ImVec2(viewport.right, viewport.bottom), true);
-                drawSmallRedLockIcon();
+                drawSmallMetalLockIcon();
                 if (viewport != null)
                     ImGui.ImDrawList_PopClipRect(drawList);
             }
@@ -681,30 +714,30 @@ class ItemUtilitiesMod {
         }
     }
 
-    static function drawSmallRedLockIcon():Void {
+    static function drawSmallMetalLockIcon():Void {
         var min = ImGui.getItemRectMin();
         var drawList = ImGui.getWindowDrawList();
-        var red = ImGui.colorConvertFloat4ToU32(new ImVec4(0.90, 0.12, 0.12, 1));
-        var keyhole = ImGui.colorConvertFloat4ToU32(new ImVec4(0.35, 0.04, 0.04, 1));
+        var metal = ImGui.colorConvertFloat4ToU32(new ImVec4(0.72, 0.76, 0.82, 1));
+        var keyhole = ImGui.colorConvertFloat4ToU32(new ImVec4(0.20, 0.22, 0.26, 1));
 
         ImGui.ImDrawList_AddLine(drawList,
             new ImVec2(min.x + 5, min.y + 8),
-            new ImVec2(min.x + 5, min.y + 5), red, 2.0);
+            new ImVec2(min.x + 5, min.y + 5), metal, 2.0);
         ImGui.ImDrawList_AddLine(drawList,
             new ImVec2(min.x + 5, min.y + 5),
-            new ImVec2(min.x + 7, min.y + 2), red, 2.0);
+            new ImVec2(min.x + 7, min.y + 2), metal, 2.0);
         ImGui.ImDrawList_AddLine(drawList,
             new ImVec2(min.x + 7, min.y + 2),
-            new ImVec2(min.x + 10, min.y + 2), red, 2.0);
+            new ImVec2(min.x + 10, min.y + 2), metal, 2.0);
         ImGui.ImDrawList_AddLine(drawList,
             new ImVec2(min.x + 10, min.y + 2),
-            new ImVec2(min.x + 12, min.y + 5), red, 2.0);
+            new ImVec2(min.x + 12, min.y + 5), metal, 2.0);
         ImGui.ImDrawList_AddLine(drawList,
             new ImVec2(min.x + 12, min.y + 5),
-            new ImVec2(min.x + 12, min.y + 8), red, 2.0);
+            new ImVec2(min.x + 12, min.y + 8), metal, 2.0);
         ImGui.ImDrawList_AddRectFilled(drawList,
             new ImVec2(min.x + 3, min.y + 7),
-            new ImVec2(min.x + 14, min.y + 16), red, 2.0, 0);
+            new ImVec2(min.x + 14, min.y + 16), metal, 2.0, 0);
         ImGui.ImDrawList_AddCircleFilled(drawList,
             new ImVec2(min.x + 8.5, min.y + 11), 1.25, keyhole, 8);
         ImGui.ImDrawList_AddLine(drawList,
@@ -1881,6 +1914,8 @@ class ItemUtilitiesMod {
             if (Reflect.hasField(data, "showDepositMaterials")) showDepositMaterials.set(Reflect.field(data, "showDepositMaterials"));
             if (Reflect.hasField(data, "showLockVisuals"))
                 showLockVisuals.set(Reflect.field(data, "showLockVisuals"));
+            if (Reflect.hasField(data, "sortingIgnoresLockedItems"))
+                sortingIgnoresLockedItems.set(Reflect.field(data, "sortingIgnoresLockedItems"));
             if (Reflect.hasField(data, "hotkeyKey")) hotkeyKey = cast Reflect.field(data, "hotkeyKey");
             if (Reflect.hasField(data, "hotkeyCtrl")) hotkeyCtrl = Reflect.field(data, "hotkeyCtrl");
             if (Reflect.hasField(data, "hotkeyShift")) hotkeyShift = Reflect.field(data, "hotkeyShift");
@@ -1931,6 +1966,7 @@ class ItemUtilitiesMod {
             enabled: enabled.get(),
             showDepositMaterials: showDepositMaterials.get(),
             showLockVisuals: showLockVisuals.get(),
+            sortingIgnoresLockedItems: sortingIgnoresLockedItems.get(),
             hotkeyKey: hotkeyKey,
             hotkeyCtrl: hotkeyCtrl,
             hotkeyShift: hotkeyShift,
