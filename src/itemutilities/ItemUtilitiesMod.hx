@@ -303,6 +303,7 @@ class ItemUtilitiesMod {
             drawLockHeaderButton();
             if (lockEditMode)
                 drawLockSlotOverlays();
+            drawBankLockBadges();
             syncAllSlotLocks();
         }
 
@@ -506,6 +507,64 @@ class ItemUtilitiesMod {
                     setGameButtonCursor();
                     ImGui.setTooltip(isItemLocked(item) ? "Unlock item" : "Lock item");
                 }
+            }
+            ImGui.end();
+            ImGui.popStyleVar();
+        }
+    }
+
+    static function drawBankLockBadges():Void {
+        if (activeBankWindow == null || bankInventory == null)
+            return;
+        var badgeNumber = 0;
+        for (entry in visibleSlots) {
+            var slot:Dynamic = entry.slot;
+            if (slot == null || entry.inventory != bankInventory)
+                continue;
+            var item = itemAt(entry.inventory, entry.index);
+            if (item == null)
+                item = fieldOrNull(slot, "item");
+            if (!isItemLocked(item))
+                continue;
+
+            var x:Float;
+            var y:Float;
+            try {
+                if (HlxRuntime.resolveField(slot, "visible") == false
+                    || fieldOrNull(slot, "parent") == null)
+                    continue;
+                x = cast HlxRuntime.resolveField(slot, "absX");
+                y = cast HlxRuntime.resolveField(slot, "absY");
+            } catch (_:Dynamic) continue;
+
+            // Bank InventorySlot does not render its native `locked` property,
+            // so draw the same compact padlock treatment over the slot without
+            // intercepting mouse input.
+            ImGui.setNextWindowPos(new ImVec2(x + 27, y + 2));
+            ImGui.setNextWindowSize(new ImVec2(19, 20));
+            ImGui.setNextWindowBgAlpha(0);
+            var flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
+                | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoFocusOnAppearing
+                | ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.NoInputs;
+            ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, new ImVec2(0, 0));
+            if (ImGui.begin("##bank-lock-badge-" + badgeNumber++, null, flags)) {
+                var drawList = ImGui.getWindowDrawList();
+                var color = ImGui.colorConvertFloat4ToU32(new ImVec4(0.94, 0.89, 0.83, 1));
+                var shade = ImGui.colorConvertFloat4ToU32(new ImVec4(0.18, 0.16, 0.15, 0.80));
+                ImGui.ImDrawList_AddRectFilled(drawList,
+                    new ImVec2(x + 3, y + 9), new ImVec2(x + 16, y + 19), shade, 2.0, 0);
+                ImGui.ImDrawList_AddRect(drawList,
+                    new ImVec2(x + 3, y + 9), new ImVec2(x + 16, y + 19), color, 2.0, 1.5, 0);
+                ImGui.ImDrawList_AddLine(drawList,
+                    new ImVec2(x + 6, y + 9), new ImVec2(x + 6, y + 6), color, 1.5);
+                ImGui.ImDrawList_AddLine(drawList,
+                    new ImVec2(x + 6, y + 6), new ImVec2(x + 8, y + 3), color, 1.5);
+                ImGui.ImDrawList_AddLine(drawList,
+                    new ImVec2(x + 8, y + 3), new ImVec2(x + 12, y + 3), color, 1.5);
+                ImGui.ImDrawList_AddLine(drawList,
+                    new ImVec2(x + 12, y + 3), new ImVec2(x + 14, y + 6), color, 1.5);
+                ImGui.ImDrawList_AddLine(drawList,
+                    new ImVec2(x + 14, y + 6), new ImVec2(x + 14, y + 9), color, 1.5);
             }
             ImGui.end();
             ImGui.popStyleVar();
@@ -1217,9 +1276,9 @@ class ItemUtilitiesMod {
             // its callback for this synthetic release so the inventory is not
             // sorted as a side effect.
             HlxRuntime.callResolved(setOnClickMember, [referenceButton, null]);
-            // release(event, playSound) has no optional arguments in the HL
-            // signature even though a synthetic click has no hxd.Event.
-            HlxRuntime.callResolved(releaseUiElementMember, [referenceButton, null, true]);
+            // The HL signature is release(playSound, event). A synthetic click
+            // has no hxd.Event, but should follow the normal sound path.
+            HlxRuntime.callResolved(releaseUiElementMember, [referenceButton, true, null]);
         } catch (error:Dynamic) {
             logLockError("button click sound", error);
         }
