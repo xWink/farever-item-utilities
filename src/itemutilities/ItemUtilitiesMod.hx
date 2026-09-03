@@ -96,6 +96,8 @@ class ItemUtilitiesMod {
     static var activeHero:Dynamic;
     static var lockErrors:Map<String, Bool> = new Map();
     static var recyclerLockedUiUids:Map<String, Bool> = new Map();
+    static var recyclerTraceSequence:Int = 0;
+    static inline var RECYCLER_TRACE_PREFIX = "[ItemUtilities][RecyclerTrace]";
     static var activeTooltip:Dynamic;
     static var activeTooltipShownAt:Float = 0;
     static var activeBaseUI:Dynamic;
@@ -196,7 +198,32 @@ class ItemUtilitiesMod {
     static function afterInventoryActionsBound(instance:Dynamic, slot:Dynamic,
         result:Void):Void {
         registerSlot(slot);
+        recyclerTrace("bindInventoryActions.beforeSync", fieldOrNull(slot, "item"), slot);
         syncRecyclerSlot(slot);
+        recyclerTrace("bindInventoryActions.afterSync", fieldOrNull(slot, "item"), slot);
+    }
+
+    @:hlx.postfix(ui.UIElement.bindAction)
+    static function afterUiActionBound(instance:Dynamic, action:Dynamic,
+        setCheckEnable:hl.Ref<Bool>, result:Void):Void {
+        if (Std.string(fieldOrNull(action, "icon")) != "Item_Complete")
+            return;
+        recyclerTrace("bindAction.Item_Complete", fieldOrNull(instance, "item"), instance,
+            "input=" + safeString(fieldOrNull(action, "input"))
+            + " setCheckEnable=" + safeString(setCheckEnable));
+    }
+
+    @:hlx.postfix(ui.BaseUI.startDrag)
+    static function afterRecyclerDragStarted(instance:Dynamic, element:Dynamic,
+        result:Void):Void {
+        var item = fieldOrNull(element, "item");
+        if (item != null)
+            recyclerTrace("drag.start", item, element);
+    }
+
+    @:hlx.postfix(ui.BaseUI.endDrag)
+    static function afterRecyclerDragEnded(instance:Dynamic, result:Void):Void {
+        recyclerTrace("drag.end", null, null);
     }
 
     @:hlx.postfix(ui.BaseUI.setTip)
@@ -233,15 +260,64 @@ class ItemUtilitiesMod {
     @:hlx.prefix(st.Loadout.checkCompleteItem)
     static function preventLockedRecyclerCheck(instance:Dynamic,
         item:Dynamic):HlxPrefixResult<Dynamic> {
-        return isRecyclerUiItemLocked(item)
-            ? SkipWith(getLockedItemReason())
-            : Continue;
+        var locked = isRecyclerUiItemLocked(item);
+        recyclerTrace("checkCompleteItem", item, null,
+            "decision=" + (locked ? "BLOCK" : "continue"));
+        return locked ? SkipWith(getLockedItemReason()) : Continue;
     }
 
     @:hlx.prefix(st.Loadout.requestCompleteItem)
     static function preventLockedRecyclerRequest(instance:Dynamic,
         item:Dynamic):HlxPrefixControl {
-        return isRecyclerUiItemLocked(item) ? Skip : Continue;
+        var locked = isRecyclerUiItemLocked(item);
+        recyclerTrace("requestCompleteItem", item, null,
+            "decision=" + (locked ? "BLOCK" : "continue"));
+        return locked ? Skip : Continue;
+    }
+
+    @:hlx.prefix(st.Loadout.requestCompleteItem__impl)
+    static function traceRecyclerRequestImpl(instance:Dynamic,
+        item:Dynamic):HlxPrefixControl {
+        recyclerTrace("requestCompleteItem__impl", item, null);
+        return Continue;
+    }
+
+    @:hlx.prefix(st.Loadout.completeItem)
+    static function traceRecyclerCompleteItem(instance:Dynamic, item:Dynamic,
+        callback:Dynamic):HlxPrefixResult<Dynamic> {
+        recyclerTrace("completeItem", item, null,
+            "callback=" + safeString(callback));
+        return Continue;
+    }
+
+    @:hlx.prefix(st.Loadout.implInlineCompleteItem)
+    static function traceRecyclerInlineComplete(instance:Dynamic, item:Dynamic,
+        mutate:Bool):HlxPrefixResult<Dynamic> {
+        recyclerTrace("implInlineCompleteItem", item, null,
+            "mutate=" + mutate);
+        return Continue;
+    }
+
+    @:hlx.prefix(st.Loadout.apiRpcCompleteItem)
+    static function traceRecyclerRpc(instance:Dynamic, item:Dynamic,
+        callback:Dynamic):HlxPrefixControl {
+        recyclerTrace("apiRpcCompleteItem", item, null,
+            "callback=" + safeString(callback));
+        return Continue;
+    }
+
+    @:hlx.prefix(st.Loadout.apiRpcCompleteItem__impl)
+    static function traceRecyclerRpcImpl(instance:Dynamic,
+        item:Dynamic):HlxPrefixResult<Bool> {
+        recyclerTrace("apiRpcCompleteItem__impl", item, null);
+        return Continue;
+    }
+
+    @:hlx.prefix(st.Loadout.implCompleteItem)
+    static function traceRecyclerMutation(instance:Dynamic,
+        item:Dynamic):HlxPrefixResult<Dynamic> {
+        recyclerTrace("implCompleteItem", item, null);
+        return Continue;
     }
 
     @:hlx.prefix(st.Inventory.canRequestDropIndex)
@@ -1487,6 +1563,63 @@ class ItemUtilitiesMod {
             syncSlotLockEntry(entry);
     }
 
+    static function recyclerTrace(event:String, item:Dynamic, slot:Dynamic,
+        extra:String = null):Void {
+        recyclerTraceSequence++;
+        var uid = itemUid(item);
+        var parts:Array<String> = [
+            RECYCLER_TRACE_PREFIX,
+            "#" + recyclerTraceSequence,
+            event,
+            "itemUid=" + safeString(uid),
+            "itemKind=" + safeString(fieldOrNull(item, "kind")),
+            "directLocked=" + (uid != null && hasLockUid(uid)),
+            "uiUidMapped=" + (uid != null && recyclerLockedUiUids.exists(uid)),
+            "enabled=" + enabled.get()
+        ];
+        if (slot != null) {
+            var displayed = fieldOrNull(slot, "item");
+            var slotInventory = fieldOrNull(slot, "inventory");
+            var slotIndex = fieldOrNull(slot, "index");
+            parts.push("slot=" + safeString(slot));
+            parts.push("slotIndex=" + safeString(slotIndex));
+            parts.push("slotInventory=" + safeString(slotInventory));
+            parts.push("displayedUid=" + safeString(itemUid(displayed)));
+            parts.push("slot.locked=" + safeString(fieldOrNull(slot, "locked")));
+            parts.push("slot.modLocked=" + safeString(fieldOrNull(slot, "modLocked")));
+            var authoritative = authoritativeSlotItem(slot);
+            parts.push("authoritativeUid=" + safeString(itemUid(authoritative)));
+            parts.push("authoritativeLocked=" + isItemLocked(authoritative));
+        }
+        parts.push("lockUids=" + recyclerLockUidSummary());
+        if (extra != null)
+            parts.push(extra);
+        trace(parts.join(" "));
+    }
+
+    static function authoritativeSlotItem(slot:Dynamic):Dynamic {
+        for (entry in visibleSlots)
+            if (entry != null && entry.slot == slot)
+                return itemAt(entry.inventory, entry.index);
+        return null;
+    }
+
+    static function recyclerLockUidSummary():String {
+        var values:Array<String> = [];
+        for (record in lockRecords) {
+            var uid = recordString(record, "uid");
+            if (uid != null)
+                values.push(uid);
+        }
+        return "[" + values.join(",") + "]";
+    }
+
+    static function safeString(value:Dynamic):String {
+        if (value == null)
+            return "null";
+        try return Std.string(value) catch (_:Dynamic) return "<unprintable>";
+    }
+
     static function syncRecyclerSlot(slot:Dynamic):Void {
         for (entry in visibleSlots) {
             if (entry != null && entry.slot == slot) {
@@ -1498,13 +1631,21 @@ class ItemUtilitiesMod {
     }
 
     static function syncRecyclerUiUid(slot:Dynamic, locked:Bool):Void {
-        var uid = itemUid(fieldOrNull(slot, "item"));
-        if (uid == null)
+        var item = fieldOrNull(slot, "item");
+        var uid = itemUid(item);
+        if (uid == null) {
+            recyclerTrace("syncRecyclerUiUid.noUid", item, slot,
+                "desiredLocked=" + locked);
             return;
+        }
+        var previous = recyclerLockedUiUids.exists(uid);
         if (locked)
             recyclerLockedUiUids.set(uid, true);
         else
             recyclerLockedUiUids.remove(uid);
+        if (previous != locked)
+            recyclerTrace("syncRecyclerUiUid.changed", item, slot,
+                "previous=" + previous + " desired=" + locked);
     }
 
     static function isRecyclerUiItemLocked(item:Dynamic):Bool {
