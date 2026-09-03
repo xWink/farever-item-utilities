@@ -655,7 +655,7 @@ class ItemUtilitiesMod {
             if (!slotIntersectsInventoryViewport(entry, x, y))
                 continue;
 
-            ImGui.setNextWindowPos(new ImVec2(x + 33, y + 2));
+            ImGui.setNextWindowPos(new ImVec2(x + 40, y + 7));
             ImGui.setNextWindowBgAlpha(0);
             var flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
                 | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings
@@ -664,7 +664,17 @@ class ItemUtilitiesMod {
             ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, new ImVec2(0, 0));
             if (ImGui.begin("##item-lock-badge-" + itemUid(item), null, flags)) {
                 ImGui.invisibleButton("##badge", new ImVec2(16, 17));
+                var drawList = ImGui.getWindowDrawList();
+                var viewport = entry.inventory == sourceInventory
+                    ? inventoryViewportBounds()
+                    : null;
+                if (viewport != null)
+                    ImGui.ImDrawList_PushClipRect(drawList,
+                        new ImVec2(viewport.left, viewport.top),
+                        new ImVec2(viewport.right, viewport.bottom), true);
                 drawSmallRedLockIcon();
+                if (viewport != null)
+                    ImGui.ImDrawList_PopClipRect(drawList);
             }
             ImGui.end();
             ImGui.popStyleVar();
@@ -1168,28 +1178,37 @@ class ItemUtilitiesMod {
         return true;
     }
 
-    static function slotIntersectsInventoryViewport(entry:Dynamic, x:Float, y:Float):Bool {
-        if (entry.inventory != sourceInventory)
-            return true;
+    static function inventoryViewportBounds():Dynamic {
         var viewport = fieldOrNull(playerInventoryComp, "invContent");
         if (viewport == null || !isUiVisible(viewport))
-            return false;
+            return null;
         var rawWidth = fieldOrNull(viewport, "calculatedWidth");
         var rawHeight = fieldOrNull(viewport, "calculatedHeight");
         var rawLeft = fieldOrNull(viewport, "absX");
         var rawTop = fieldOrNull(viewport, "absY");
         if (rawWidth == null || rawHeight == null || rawLeft == null || rawTop == null)
-            return false;
+            return null;
         var width:Float = cast rawWidth;
         var height:Float = cast rawHeight;
         var left:Float = cast rawLeft;
         var top:Float = cast rawTop;
         if (width <= 0 || height <= 0)
-            return false;
-        var right = left + width;
-        var bottom = top + height;
-        return x < right && x + INVENTORY_SLOT_SIZE > left
-            && y < bottom && y + INVENTORY_SLOT_SIZE > top;
+            return null;
+        return {
+            left: left,
+            top: top,
+            right: left + width,
+            bottom: top + height
+        };
+    }
+
+    static function slotIntersectsInventoryViewport(entry:Dynamic, x:Float, y:Float):Bool {
+        if (entry.inventory != sourceInventory)
+            return true;
+        var viewport = inventoryViewportBounds();
+        return viewport != null
+            && x < viewport.right && x + INVENTORY_SLOT_SIZE > viewport.left
+            && y < viewport.bottom && y + INVENTORY_SLOT_SIZE > viewport.top;
     }
 
     static function registerSlot(slot:Dynamic):Void {
