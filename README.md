@@ -15,21 +15,18 @@ Adds six deposit buttons beside the bank's Sort button:
 - **Deposit demon enchantments**
 - **Deposit miscellaneous items**
 
-Deposits use Farever's normal server-validated transfer requests and run sequentially. Locked items are skipped, rejected transfers do not stop the rest of a batch, and processing stops safely when the bank is full.
-
 The deposit buttons can be hidden from the mod settings.
 
 ### Item locking
 
-Adds an item-locking mode beside the character inventory's Sort button. Enable edit mode and select inventory items to lock or unlock them.
+Adds an item-locking mode beside the character inventory's Sort button. Enable locking mode and click inventory items to lock or unlock them.
 
-Locked items are marked with a small metallic padlock and are protected from:
+Locked items are marked with a small lock icon and are protected from:
 
 - Selling
 - Dropping or discarding
 - Depositing into the bank
-- Dragging or transferring into the Spark Recycler
-- Right-click transfers into the Spark Recycler
+- Placing into the Spark Recycler
 
 Locks follow items as they move between inventory and equipment. They are persisted separately for each character using Farever's unique character ID, with item identity and location tracking to avoid transferring a lock to the wrong identical item.
 
@@ -52,7 +49,7 @@ Each preset can also be assigned its own configurable keyboard shortcut, includi
 
 ### Settings
 
-Press **F9** to open the settings menu. The settings hotkey is configurable.
+Press **F9 (default)** to open the settings menu. The settings hotkey is configurable.
 
 Available settings include:
 
