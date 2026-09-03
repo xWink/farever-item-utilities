@@ -74,8 +74,10 @@ class ItemUtilitiesMod {
     static var getChildIndexMember:hlx.runtime.ResolvedMember;
     static var addChildAtMember:hlx.runtime.ResolvedMember;
     static var inventoryWindowType:hl.Bytes;
+    static var baseElementType:hl.Bytes;
     static var inventorySlotType:hl.Bytes;
     static var getInventoryWindowHeroMember:hlx.runtime.ResolvedMember;
+    static var getBaseElementHeroMember:hlx.runtime.ResolvedMember;
     static var setSlotLockedMember:hlx.runtime.ResolvedMember;
     static var eReasonType:hl.Bytes;
     static var lockedItemReason:Dynamic;
@@ -452,7 +454,7 @@ class ItemUtilitiesMod {
         drawDepositIcon();
         if (ImGui.isItemHovered()) {
             setGameButtonCursor();
-            ImGui.setTooltip(" Deposit crafting components  ");
+            ImGui.setTooltip(" Deposit crafting components ");
         }
 
         ImGui.end();
@@ -1134,7 +1136,15 @@ class ItemUtilitiesMod {
         if (activeHero != null && fieldOrNull(activeHero, "loadout") != null)
             return activeHero;
         try {
-            if (activeInventoryWindow != null) {
+            if (activeInventoryUI != null) {
+                if (baseElementType == null)
+                    baseElementType = HlxRuntime.resolveType("ui.BaseElement");
+                if (baseElementType != null && getBaseElementHeroMember == null)
+                    getBaseElementHeroMember = HlxRuntime.resolveMember(baseElementType, "get_myHero");
+                if (getBaseElementHeroMember != null)
+                    activeHero = HlxRuntime.callResolved(getBaseElementHeroMember, [activeInventoryUI]);
+            }
+            if (activeHero == null && activeInventoryWindow != null) {
                 if (inventoryWindowType == null)
                     inventoryWindowType = HlxRuntime.resolveType("ui.win.InventoryWindow");
                 if (inventoryWindowType != null && getInventoryWindowHeroMember == null)
