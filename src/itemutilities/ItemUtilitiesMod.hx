@@ -68,6 +68,7 @@ class ItemUtilitiesMod {
     static var createNewMember:hlx.runtime.ResolvedMember;
     static var getParentPropertiesMember:hlx.runtime.ResolvedMember;
     static var setOnClickMember:hlx.runtime.ResolvedMember;
+    static var releaseUiElementMember:hlx.runtime.ResolvedMember;
     static var setTextTipMember:hlx.runtime.ResolvedMember;
     static var setVisibleMember:hlx.runtime.ResolvedMember;
     static var getChildIndexMember:hlx.runtime.ResolvedMember;
@@ -262,12 +263,14 @@ class ItemUtilitiesMod {
         openInventoryWindows = kept;
 
         if (instance == activeInventoryWindow) {
+            lockEditMode = false;
             activeInventoryWindow = null;
             sourceInventory = null;
             playerInventoryComp = null;
             activeHero = null;
         }
         if (instance == activeInventoryUI) {
+            lockEditMode = false;
             activeInventoryUI = null;
             playerInventoryComp = null;
         }
@@ -292,6 +295,8 @@ class ItemUtilitiesMod {
             drawBankHeaderButton();
 
         if (enabled.get()) {
+            if (activeInventoryUI == null || !isUiVisible(activeInventoryUI))
+                lockEditMode = false;
             ensureHeroInventory();
             selectPlayerInventoryComp();
             reconcileItemLocks();
@@ -387,8 +392,10 @@ class ItemUtilitiesMod {
             return;
         }
 
-        if (ImGui.button("##deposit-materials", new ImVec2(32, 30)))
+        if (ImGui.button("##deposit-materials", new ImVec2(32, 30))) {
+            playButtonClickSound(sortButton);
             if (!depositing) beginDeposit();
+        }
         drawDepositIcon();
         if (ImGui.isItemHovered()) {
             setGameButtonCursor();
@@ -429,8 +436,10 @@ class ItemUtilitiesMod {
         ImGui.pushStyleColor(ImGuiCol.Text, new ImVec4(0.92, 0.86, 0.80, 1));
 
         if (ImGui.begin("##item-utilities-lock-header", null, flags)) {
-            if (ImGui.button("##item-lock-mode", new ImVec2(32, 30)))
+            if (ImGui.button("##item-lock-mode", new ImVec2(32, 30))) {
+                playButtonClickSound(sortButton);
                 lockEditMode = !lockEditMode;
+            }
             drawLockIcon();
             if (ImGui.isItemHovered()) {
                 setGameButtonCursor();
@@ -1148,7 +1157,13 @@ class ItemUtilitiesMod {
         var slot = entry == null ? null : entry.slot;
         if (slot == null) return;
         try {
-            var item = fieldOrNull(slot, "item");
+            // Player inventory slots expose item directly, but bank slots do
+            // not reliably populate that UI field. The inventory content is
+            // authoritative for both and lets the native lock badge appear in
+            // the bank as well.
+            var item = itemAt(entry.inventory, entry.index);
+            if (item == null)
+                item = fieldOrNull(slot, "item");
             var desired = isItemLocked(item);
             var current = fieldOrNull(slot, "locked") == true;
             if (desired) {
@@ -1183,6 +1198,30 @@ class ItemUtilitiesMod {
             if (setSlotLockedMember != null)
                 HlxRuntime.callResolved(setSlotLockedMember, [slot, locked]);
         } catch (error:Dynamic) logLockError("badge setter", error);
+    }
+
+    static function playButtonClickSound(referenceButton:Dynamic):Void {
+        if (referenceButton == null)
+            return;
+        var originalOnClick = fieldOrNull(referenceButton, "onClick");
+        try {
+            if (!resolveUiMembers())
+                return;
+            if (releaseUiElementMember == null)
+                releaseUiElementMember = HlxRuntime.resolveMember(uiElementType, "release");
+            if (releaseUiElementMember == null)
+                return;
+
+            // Route through the adjacent native Sort button's release path to
+            // play exactly Farever's configured button-click sound. Suppress
+            // its callback for this synthetic release so the inventory is not
+            // sorted as a side effect.
+            HlxRuntime.callResolved(setOnClickMember, [referenceButton, null]);
+            HlxRuntime.callResolved(releaseUiElementMember, [referenceButton]);
+        } catch (error:Dynamic) {
+            logLockError("button click sound", error);
+        }
+        try HlxRuntime.callResolved(setOnClickMember, [referenceButton, originalOnClick]) catch (_:Dynamic) {}
     }
 
     static function fieldOrNull(object:Dynamic, name:String):Dynamic {
