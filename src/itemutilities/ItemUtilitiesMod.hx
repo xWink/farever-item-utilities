@@ -323,88 +323,45 @@ class ItemUtilitiesMod {
         return lockedItemReason;
     }
 
-    @:hlx.prefix(ui.win.InventoryComp.onSort)
-    static function traceInventorySortButton(instance:Dynamic):HlxPrefixResult<Void> {
-        var inventory = fieldOrNull(instance, "inventory");
-        trace("[ItemUtilities][Sort] button inventory=" + Std.string(inventory)
-            + " sourceMatch=" + (inventory == sourceInventory)
-            + " ignoreLocks=" + sortingIgnoresLockedItems.get()
-            + " current=" + describeInventoryForSort(inventory));
-        return Continue;
-    }
-
     @:hlx.prefix(st.Inventory.requestSort)
-    static function keepLockedItemsInPlaceDuringSort(instance:Dynamic, indexes:Array<Int>,
+    static function preserveLockedItemOrderDuringSort(instance:Dynamic, indexes:Array<Int>,
         callback:Dynamic):HlxPrefixResult<Dynamic> {
-        trace("[ItemUtilities][Sort] request inventory=" + Std.string(instance)
-            + " sourceMatch=" + (instance == sourceInventory)
-            + " ignoreLocks=" + sortingIgnoresLockedItems.get()
-            + " incoming=" + describeSortIndexes(instance, indexes));
-        if (!sortingIgnoresLockedItems.get() || instance != sourceInventory || indexes == null) {
-            trace("[ItemUtilities][Sort] permutation unchanged");
+        if (!sortingIgnoresLockedItems.get() || instance != sourceInventory || indexes == null)
             return Continue;
-        }
 
-        var lockedSources:Map<Int, Bool> = new Map();
+        // Farever always compacts requestSort output. Keep each locked item at
+        // its current ordinal position in that compacted list, while using the
+        // game's already-sorted order for every unlocked position.
         var unlockedSorted:Array<Int> = [];
+        var lockedCount = 0;
         for (sourceIndex in indexes) {
             if (isItemLocked(itemAt(instance, sourceIndex)))
-                lockedSources.set(sourceIndex, true);
+                lockedCount++;
             else
                 unlockedSorted.push(sourceIndex);
         }
-        if (lockedSources.keys().hasNext() == false) {
-            trace("[ItemUtilities][Sort] no locked sources; permutation unchanged");
+        if (lockedCount == 0)
             return Continue;
-        }
 
-        // The normal request is compact and contains only occupied source
-        // indexes. Extend it through the last occupied slot so locked items in
-        // sparse lower rows can remain at their exact destinations. -1 denotes
-        // an empty destination in Inventory's integer sort layout.
-        var content = getContent(instance);
-        var layoutLength = indexes.length;
-        for (slotIndex in 0...arrayLength(content))
-            if (itemAt(instance, slotIndex) != null && slotIndex + 1 > layoutLength)
-                layoutLength = slotIndex + 1;
-        indexes.resize(layoutLength);
-
+        var compactOrder:Array<Int> = [];
         var unlockedIndex = 0;
-        for (destinationIndex in 0...layoutLength) {
-            if (lockedSources.exists(destinationIndex))
-                indexes[destinationIndex] = destinationIndex;
-            else if (unlockedIndex < unlockedSorted.length) {
-                indexes[destinationIndex] = unlockedSorted[unlockedIndex];
+        var content = getContent(instance);
+        for (sourceIndex in 0...arrayLength(content)) {
+            var item = itemAt(instance, sourceIndex);
+            if (item == null)
+                continue;
+            if (isItemLocked(item))
+                compactOrder.push(sourceIndex);
+            else {
+                compactOrder.push(unlockedSorted[unlockedIndex]);
                 unlockedIndex++;
-            } else
-                indexes[destinationIndex] = -1;
+            }
         }
-        trace("[ItemUtilities][Sort] rewritten=" + describeSortIndexes(instance, indexes));
+        if (compactOrder.length != indexes.length)
+            return Continue;
+        for (index in 0...indexes.length)
+            indexes[index] = compactOrder[index];
         return Continue;
-    }
-
-    static function describeSortIndexes(inventory:Dynamic, indexes:Array<Int>):String {
-        if (indexes == null)
-            return "null";
-        var parts:Array<String> = [];
-        for (index in indexes) {
-            var item = itemAt(inventory, index);
-            parts.push(index + ":" + itemUid(item)
-                + (isItemLocked(item) ? ":locked" : ":unlocked"));
-        }
-        return "[" + parts.join(", ") + "]";
-    }
-
-    static function describeInventoryForSort(inventory:Dynamic):String {
-        var parts:Array<String> = [];
-        var content = getContent(inventory);
-        for (index in 0...arrayLength(content)) {
-            var item = itemAt(inventory, index);
-            if (item != null)
-                parts.push(index + ":" + itemUid(item)
-                    + (isItemLocked(item) ? ":locked" : ":unlocked"));
-        }
-        return "[" + parts.join(", ") + "]";
     }
 
     @:hlx.postfix(ui.win.TitleWindow.onRemove)
@@ -505,9 +462,9 @@ class ItemUtilitiesMod {
         }
 
         var oldSortIgnoresLocks = sortingIgnoresLockedItems.get();
-        ImGui.checkbox("Sorting ignores locked items", sortingIgnoresLockedItems);
+        ImGui.checkbox("Sorting preserves order of locked items", sortingIgnoresLockedItems);
         if (ImGui.isItemHovered())
-            ImGui.setTooltip("Keeps locked items in place when sorting the character inventory.");
+            ImGui.setTooltip("Sorting will compact but not rearrange locked items. Best used with locked items being first in the inventory");
         if (sortingIgnoresLockedItems.get() != oldSortIgnoresLocks)
             saveConfig();
 
