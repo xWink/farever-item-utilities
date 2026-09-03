@@ -20,6 +20,7 @@ class ItemUtilitiesMod {
 
     static var enabled = new BoolRef(true);
     static var showDepositMaterials = new BoolRef(true);
+    static var showLockButton = new BoolRef(true);
     static var settingsOpen = new BoolRef(true);
     static var hasSeenMenu:Bool = false;
 
@@ -368,7 +369,10 @@ class ItemUtilitiesMod {
             ensureHeroInventory();
             selectPlayerInventoryComp();
             reconcileItemLocks();
-            drawLockHeaderButton();
+            if (showLockButton.get())
+                drawLockHeaderButton();
+            else
+                lockEditMode = false;
             if (lockEditMode)
                 drawLockSlotOverlays();
             syncAllSlotLocks();
@@ -405,6 +409,14 @@ class ItemUtilitiesMod {
         if (showDepositMaterials.get() != oldDeposit) {
             if (!showDepositMaterials.get()) cancelDeposit();
             syncDepositButtonVisibility();
+            saveConfig();
+        }
+
+        var oldLockButton = showLockButton.get();
+        ImGui.checkbox("Show lock button", showLockButton);
+        if (showLockButton.get() != oldLockButton) {
+            if (!showLockButton.get())
+                lockEditMode = false;
             saveConfig();
         }
 
@@ -1800,6 +1812,7 @@ class ItemUtilitiesMod {
             var data:Dynamic = Json.parse(File.getContent(CONFIG_PATH));
             if (Reflect.hasField(data, "enabled")) enabled.set(Reflect.field(data, "enabled"));
             if (Reflect.hasField(data, "showDepositMaterials")) showDepositMaterials.set(Reflect.field(data, "showDepositMaterials"));
+            if (Reflect.hasField(data, "showLockButton")) showLockButton.set(Reflect.field(data, "showLockButton"));
             if (Reflect.hasField(data, "hotkeyKey")) hotkeyKey = cast Reflect.field(data, "hotkeyKey");
             if (Reflect.hasField(data, "hotkeyCtrl")) hotkeyCtrl = Reflect.field(data, "hotkeyCtrl");
             if (Reflect.hasField(data, "hotkeyShift")) hotkeyShift = Reflect.field(data, "hotkeyShift");
@@ -1849,6 +1862,7 @@ class ItemUtilitiesMod {
         try File.saveContent(CONFIG_PATH, Json.stringify({
             enabled: enabled.get(),
             showDepositMaterials: showDepositMaterials.get(),
+            showLockButton: showLockButton.get(),
             hotkeyKey: hotkeyKey,
             hotkeyCtrl: hotkeyCtrl,
             hotkeyShift: hotkeyShift,
