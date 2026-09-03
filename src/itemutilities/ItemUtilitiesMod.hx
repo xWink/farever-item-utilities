@@ -98,6 +98,8 @@ class ItemUtilitiesMod {
     static var activeTooltip:Dynamic;
     static var activeTooltipShownAt:Float = 0;
     static var activeBaseUI:Dynamic;
+    static var wrappedRecyclerActions:Array<Dynamic> = [];
+    static var lockedDragFingerprint:String;
     static inline var LOCK_MISSING_FRAME_LIMIT = 120;
     static inline var INVENTORY_SLOT_SIZE = 48.0;
     static inline var TOOLTIP_BUTTON_DELAY = 0.2;
@@ -205,6 +207,49 @@ class ItemUtilitiesMod {
     static function afterWindowDisplayed(instance:Dynamic, window:Dynamic,
         root:Dynamic, result:Void):Void {
         activeBaseUI = instance;
+    }
+
+    @:hlx.postfix(ui.UIElement.bindAction)
+    static function afterActionBound(instance:Dynamic, action:Dynamic,
+        setCheckEnable:hl.Ref<Bool>, result:Void):Void {
+        if (action == null || fieldOrNull(action, "icon") != "Item_Complete"
+            || wrappedRecyclerActions.indexOf(action) >= 0)
+            return;
+        try {
+            // CharacterUI's recycler action closes over a UI-side equipment
+            // item. Wrap the action itself so the exact originating slot is
+            // available when deciding whether the item is locked.
+            var originalReason:Dynamic = Reflect.field(action, "reason");
+            var originalAction:Dynamic = Reflect.field(action, "action");
+            Reflect.setField(action, "reason", function():Dynamic {
+                if (isModLockedSlot(instance))
+                    return getLockedItemReason();
+                return originalReason == null
+                    ? null
+                    : Reflect.callMethod(null, originalReason, []);
+            });
+            Reflect.setField(action, "action", function():Void {
+                if (!isModLockedSlot(instance) && originalAction != null)
+                    Reflect.callMethod(null, originalAction, []);
+            });
+            wrappedRecyclerActions.push(action);
+        } catch (error:Dynamic) {
+            logLockError("recycler action guard", error);
+        }
+    }
+
+    @:hlx.postfix(ui.BaseUI.startDrag)
+    static function afterDragStarted(instance:Dynamic, element:Dynamic,
+        result:Void):Void {
+        lockedDragFingerprint = isModLockedSlot(element)
+            ? itemFingerprint(fieldOrNull(element, "item"))
+            : null;
+    }
+
+    @:hlx.postfix(ui.BaseUI.endDrag)
+    static function afterDragEnded(instance:Dynamic, element:Dynamic,
+        result:Void):Void {
+        lockedDragFingerprint = null;
     }
 
     @:hlx.prefix(st.Loadout.canSellItem)
@@ -638,21 +683,21 @@ class ItemUtilitiesMod {
         var handle = ImGui.colorConvertFloat4ToU32(new ImVec4(0.63, 0.42, 0.24, 1));
         var mark = ImGui.colorConvertFloat4ToU32(new ImVec4(0.94, 0.89, 0.83, 1));
 
-        // Draw the handle first so it passes naturally behind the head.
-        ImGui.ImDrawList_AddLine(drawList,
-            new ImVec2(min.x + 11, min.y + 10),
-            new ImVec2(min.x + 7, min.y + 19), handle, 3.0);
-
-        // Broad striking face with a tapered peen makes the silhouette read
-        // as a hammer even at this icon's small size.
+        // Long upright handle, drawn first so the head sits over it.
         ImGui.ImDrawList_AddRectFilled(drawList,
-            new ImVec2(min.x + 4, min.y + 6),
-            new ImVec2(min.x + 11, min.y + 12), metal, 1.0, 0);
+            new ImVec2(min.x + 9, min.y + 9),
+            new ImVec2(min.x + 13, min.y + 19), handle, 1.0, 0);
+
+        // Classic horizontal hammer head: a broad striking face on the left
+        // and a narrower peen on the right.
+        ImGui.ImDrawList_AddRectFilled(drawList,
+            new ImVec2(min.x + 3, min.y + 5),
+            new ImVec2(min.x + 12, min.y + 11), metal, 1.0, 0);
         ImGui.ImDrawList_AddQuadFilled(drawList,
-            new ImVec2(min.x + 11, min.y + 8),
+            new ImVec2(min.x + 12, min.y + 6),
             new ImVec2(min.x + 18, min.y + 7),
-            new ImVec2(min.x + 18, min.y + 10),
-            new ImVec2(min.x + 11, min.y + 11), metalShade);
+            new ImVec2(min.x + 18, min.y + 9),
+            new ImVec2(min.x + 12, min.y + 10), metalShade);
 
         drawDepositArrowAndBucket(min, drawList, mark);
     }
@@ -767,21 +812,21 @@ class ItemUtilitiesMod {
 
         // Down arrow and receiving tray communicate "deposit" at a glance.
         ImGui.ImDrawList_AddLine(drawList,
-            new ImVec2(min.x + 21, min.y + 6),
-            new ImVec2(min.x + 21, min.y + 16), mark, 2.0);
+            new ImVec2(min.x + 23, min.y + 6),
+            new ImVec2(min.x + 23, min.y + 16), mark, 2.0);
         ImGui.ImDrawList_AddTriangleFilled(drawList,
-            new ImVec2(min.x + 17, min.y + 14),
-            new ImVec2(min.x + 25, min.y + 14),
-            new ImVec2(min.x + 21, min.y + 19), mark);
+            new ImVec2(min.x + 19, min.y + 14),
+            new ImVec2(min.x + 27, min.y + 14),
+            new ImVec2(min.x + 23, min.y + 19), mark);
         ImGui.ImDrawList_AddLine(drawList,
-            new ImVec2(min.x + 8, min.y + 23),
-            new ImVec2(min.x + 25, min.y + 23), mark, 2.0);
+            new ImVec2(min.x + 18, min.y + 23),
+            new ImVec2(min.x + 28, min.y + 23), mark, 2.0);
         ImGui.ImDrawList_AddLine(drawList,
-            new ImVec2(min.x + 8, min.y + 19),
-            new ImVec2(min.x + 8, min.y + 23), mark, 2.0);
+            new ImVec2(min.x + 18, min.y + 19),
+            new ImVec2(min.x + 18, min.y + 23), mark, 2.0);
         ImGui.ImDrawList_AddLine(drawList,
-            new ImVec2(min.x + 25, min.y + 19),
-            new ImVec2(min.x + 25, min.y + 23), mark, 2.0);
+            new ImVec2(min.x + 28, min.y + 19),
+            new ImVec2(min.x + 28, min.y + 23), mark, 2.0);
     }
 
     static function setGameButtonCursor():Void {
@@ -1227,7 +1272,23 @@ class ItemUtilitiesMod {
             if (hasLockUid(itemUid(authoritative)))
                 return true;
         }
+        if (lockedDragFingerprint != null
+            && itemFingerprint(item) == lockedDragFingerprint)
+            return true;
         return false;
+    }
+
+    static function isModLockedSlot(slot:Dynamic):Bool {
+        if (slot == null)
+            return false;
+        for (entry in visibleSlots) {
+            if (entry != null && entry.slot == slot) {
+                if (entry.modLocked == true)
+                    return true;
+                return hasLockUid(itemUid(itemAt(entry.inventory, entry.index)));
+            }
+        }
+        return hasLockUid(itemUid(fieldOrNull(slot, "item")));
     }
 
     static function hasLockUid(uid:String):Bool {
