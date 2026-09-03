@@ -96,6 +96,7 @@ class ItemUtilitiesMod {
     static var lockErrors:Map<String, Bool> = new Map();
     static var activeTooltip:Dynamic;
     static var activeTooltipShownAt:Float = 0;
+    static var activeBaseUI:Dynamic;
     static inline var LOCK_MISSING_FRAME_LIMIT = 120;
     static inline var INVENTORY_SLOT_SIZE = 48.0;
     static inline var TOOLTIP_BUTTON_DELAY = 0.2;
@@ -186,10 +187,17 @@ class ItemUtilitiesMod {
     @:hlx.postfix(ui.BaseUI.setTip)
     static function afterTooltipSet(instance:Dynamic, element:Dynamic, anchor:Dynamic,
         position:Dynamic, nesting:Dynamic, result:Dynamic):Void {
+        activeBaseUI = instance;
         if (result != null) {
             activeTooltip = result;
             activeTooltipShownAt = haxe.Timer.stamp();
         }
+    }
+
+    @:hlx.postfix(ui.BaseUI.displayWindow)
+    static function afterWindowDisplayed(instance:Dynamic, window:Dynamic,
+        root:Dynamic, result:Void):Void {
+        activeBaseUI = instance;
     }
 
     @:hlx.prefix(st.Loadout.canSellItem)
@@ -441,7 +449,7 @@ class ItemUtilitiesMod {
             return;
         }
 
-        if (tooltipOverlaps(x - 38, y, 32, 30))
+        if (buttonCovered(x - 38, y, 32, 30))
             return;
 
         // Keep the utility in the Bank header without modifying Domkit's live
@@ -494,7 +502,7 @@ class ItemUtilitiesMod {
             y = cast HlxRuntime.resolveField(sortButton, "absY");
         } catch (_:Dynamic) return;
 
-        if (tooltipOverlaps(x - 38, y, 32, 30))
+        if (buttonCovered(x - 38, y, 32, 30))
             return;
 
         ImGui.setNextWindowPos(new ImVec2(x - 38, y));
@@ -579,10 +587,8 @@ class ItemUtilitiesMod {
             if (ImGui.begin("##item-lock-slot-" + entry.index, null, flags)) {
                 if (ImGui.invisibleButton("##toggle", new ImVec2(INVENTORY_SLOT_SIZE, INVENTORY_SLOT_SIZE)))
                     toggleItemLock(item);
-                if (ImGui.isItemHovered()) {
+                if (ImGui.isItemHovered())
                     setGameButtonCursor();
-                    ImGui.setTooltip(isItemLocked(item) ? "Unlock item" : "Lock item");
-                }
             }
             ImGui.end();
             ImGui.popStyleVar();
@@ -907,6 +913,11 @@ class ItemUtilitiesMod {
         visibleSlots.push({ inventory: inventory, index: index, slot: slot, modLocked: false });
     }
 
+    static function buttonCovered(x:Float, y:Float, width:Float, height:Float):Bool {
+        return tooltipOverlaps(x, y, width, height)
+            || windowOverlaps(x, y, width, height);
+    }
+
     static function tooltipOverlaps(x:Float, y:Float, width:Float, height:Float):Bool {
         try {
             var tip = activeTooltip;
@@ -916,33 +927,53 @@ class ItemUtilitiesMod {
             if (haxe.Timer.stamp() - activeTooltipShownAt < TOOLTIP_BUTTON_DELAY)
                 return false;
 
-            if (h2dObjectType == null)
-                h2dObjectType = HlxRuntime.resolveType("h2d.Object");
-            if (h2dObjectType != null && getBoundsMember == null)
-                getBoundsMember = HlxRuntime.resolveMember(h2dObjectType, "getBounds");
-            if (getBoundsMember == null)
-                return false;
-
-            // Farever's Tooltip is an h2d.Object. getBounds(null, null) returns
-            // its final screen-space rectangle after Tooltip.sync has placed it.
-            var bounds:Dynamic = HlxRuntime.callResolved(getBoundsMember, [tip, null, null]);
-            if (bounds == null)
-                return false;
             // Ignore the tooltip's transparent outer padding/shadow so a
             // merely adjacent tooltip does not make the button disappear.
-            var left:Float = cast HlxRuntime.resolveField(bounds, "xMin")
-                + TOOLTIP_OVERLAP_INSET;
-            var top:Float = cast HlxRuntime.resolveField(bounds, "yMin")
-                + TOOLTIP_OVERLAP_INSET;
-            var right:Float = cast HlxRuntime.resolveField(bounds, "xMax")
-                - TOOLTIP_OVERLAP_INSET;
-            var bottom:Float = cast HlxRuntime.resolveField(bounds, "yMax")
-                - TOOLTIP_OVERLAP_INSET;
-            return x < right && x + width > left && y < bottom && y + height > top;
+            return objectOverlaps(tip, x, y, width, height, TOOLTIP_OVERLAP_INSET);
         } catch (error:Dynamic) {
             logLockError("tooltip bounds", error);
             return false;
         }
+    }
+
+    static function windowOverlaps(x:Float, y:Float, width:Float, height:Float):Bool {
+        try {
+            var windows = fieldOrNull(activeBaseUI, "windows");
+            for (index in 0...arrayLength(windows)) {
+                var window = arrayGet(windows, index);
+                if (window == null || window == activeBankWindow
+                    || window == activeInventoryWindow)
+                    continue;
+                if (fieldOrNull(window, "parent") == null
+                    || fieldOrNull(window, "visible") == false)
+                    continue;
+                if (objectOverlaps(window, x, y, width, height, 0))
+                    return true;
+            }
+        } catch (error:Dynamic) {
+            logLockError("window bounds", error);
+        }
+        return false;
+    }
+
+    static function objectOverlaps(object:Dynamic, x:Float, y:Float,
+        width:Float, height:Float, inset:Float):Bool {
+        if (h2dObjectType == null)
+            h2dObjectType = HlxRuntime.resolveType("h2d.Object");
+        if (h2dObjectType != null && getBoundsMember == null)
+            getBoundsMember = HlxRuntime.resolveMember(h2dObjectType, "getBounds");
+        if (getBoundsMember == null)
+            return false;
+
+        // getBounds(null, null) returns the final screen-space rectangle.
+        var bounds:Dynamic = HlxRuntime.callResolved(getBoundsMember, [object, null, null]);
+        if (bounds == null)
+            return false;
+        var left:Float = cast HlxRuntime.resolveField(bounds, "xMin") + inset;
+        var top:Float = cast HlxRuntime.resolveField(bounds, "yMin") + inset;
+        var right:Float = cast HlxRuntime.resolveField(bounds, "xMax") - inset;
+        var bottom:Float = cast HlxRuntime.resolveField(bounds, "yMax") - inset;
+        return x < right && x + width > left && y < bottom && y + height > top;
     }
 
     static function toggleItemLock(item:Dynamic):Void {
