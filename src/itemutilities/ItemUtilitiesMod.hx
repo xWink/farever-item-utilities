@@ -238,6 +238,38 @@ class ItemUtilitiesMod {
         return SkipWith(null);
     }
 
+    @:hlx.prefix(st.Inventory.canRequestTransfer)
+    static function preventLockedBankTransferCheck(instance:Dynamic, index:Int,
+        destination:Dynamic, destinationIndex:Int, force:hl.Ref<Bool>,
+        count:Null<Int>):HlxPrefixResult<Bool> {
+        var item = itemAt(instance, index);
+        return isItemLocked(item) && isBankInventory(destination)
+            ? SkipWith(false)
+            : Continue;
+    }
+
+    // Guard the actual replicated request as well as the UI eligibility check.
+    @:hlx.prefix(st.Inventory.requestTransfer)
+    static function preventLockedBankTransferRequest(instance:Dynamic, index:Int,
+        destination:Dynamic, destinationIndex:Int, force:hl.Ref<Bool>,
+        count:Null<Int>, callback:Dynamic):HlxPrefixResult<Dynamic> {
+        var item = itemAt(instance, index);
+        if (!isItemLocked(item) || !isBankInventory(destination))
+            return Continue;
+        rejectActionCallback(callback);
+        return SkipWith(getLockedItemReason());
+    }
+
+    static function isBankInventory(inventory:Dynamic):Bool {
+        if (inventory == null)
+            return false;
+        if (inventory == bankInventory)
+            return true;
+        var hero = resolveHero();
+        var loadout = fieldOrNull(hero, "loadout");
+        return loadout != null && inventory == fieldOrNull(loadout, "bank");
+    }
+
     static function rejectActionCallback(callback:Dynamic):Void {
         if (callback != null)
             try Reflect.callMethod(null, callback, [false]) catch (_:Dynamic) {}
@@ -896,6 +928,12 @@ class ItemUtilitiesMod {
 
         var kept:Array<Dynamic> = [];
         for (record in lockRecords) {
+            // Bank locks belonged to the previous behavior. Locked items now
+            // stay with the character and cannot be deposited.
+            if (recordString(record, "location") == "bank") {
+                changed = true;
+                continue;
+            }
             var uid = recordString(record, "uid");
             var exact = uid == null ? null : current.get(uid);
             if (exact != null && claimed.exists(uid)) {
@@ -950,7 +988,7 @@ class ItemUtilitiesMod {
             } else {
                 var missing = recordInt(record, "missing", 0) + 1;
                 record.missing = missing;
-                // A bank/equipment container may not be materialized yet. Keep
+                // Equipment may not be materialized yet. Keep
                 // unresolved persisted records rather than guessing or losing
                 // them; a later scan can still restore the exact item.
                 kept.push(record);
@@ -981,11 +1019,9 @@ class ItemUtilitiesMod {
     static function recordAppliesToTrackedItem(record:Dynamic, tracked:Dynamic):Bool {
         if (record == null || tracked == null)
             return false;
-        // The bank is shared, while inventory and equipment belong to a hero.
-        // Legacy records without a characterId are adopted only from their
+        // Inventory and equipment belong to a hero. Legacy records without a
+        // characterId are adopted only from their
         // exact saved slot and gain the current ID on the next save.
-        if (tracked.location == "bank")
-            return recordString(record, "location") == "bank";
         var savedCharacterId = recordString(record, "characterId");
         // Records produced by the previous build used a runtime object ID,
         // which changes after reconnecting. Treat those as legacy so they can
@@ -1020,13 +1056,11 @@ class ItemUtilitiesMod {
         var hero = resolveHero();
         var characterId = heroPersistentId(hero);
         addTrackedInventory(inventories, sourceInventory, "inventory", characterId);
-        addTrackedInventory(inventories, bankInventory, "bank", null);
 
         var loadout = fieldOrNull(hero, "loadout");
         if (loadout != null) {
             addTrackedInventory(inventories, fieldOrNull(loadout, "inventory"), "inventory", characterId);
             addTrackedInventory(inventories, fieldOrNull(loadout, "equipment"), "equipment", characterId);
-            addTrackedInventory(inventories, fieldOrNull(loadout, "bank"), "bank", null);
         }
 
         for (entry in inventories) {
@@ -1473,13 +1507,14 @@ class ItemUtilitiesMod {
                     for (record in saved) {
                         var uid = recordString(record, "uid");
                         var fingerprint = recordString(record, "fingerprint");
-                        if (uid != null && fingerprint != null) {
+                        var location = recordString(record, "location");
+                        if (uid != null && fingerprint != null && location != "bank") {
                             lockRecords.push({
                                 uid: uid,
                                 fingerprint: fingerprint,
                                 missing: 0,
                                 known: [],
-                                location: recordString(record, "location"),
+                                location: location,
                                 index: recordInt(record, "index", -1),
                                 characterId: recordString(record, "characterId"),
                                 restored: false
