@@ -95,8 +95,11 @@ class ItemUtilitiesMod {
     static var activeHero:Dynamic;
     static var lockErrors:Map<String, Bool> = new Map();
     static var activeTooltip:Dynamic;
+    static var activeTooltipShownAt:Float = 0;
     static inline var LOCK_MISSING_FRAME_LIMIT = 120;
     static inline var INVENTORY_SLOT_SIZE = 48.0;
+    static inline var TOOLTIP_BUTTON_DELAY = 0.2;
+    static inline var TOOLTIP_OVERLAP_INSET = 4.0;
 
     static function main():Void {
         loadConfig();
@@ -183,8 +186,10 @@ class ItemUtilitiesMod {
     @:hlx.postfix(ui.BaseUI.setTip)
     static function afterTooltipSet(instance:Dynamic, element:Dynamic, anchor:Dynamic,
         position:Dynamic, nesting:Dynamic, result:Dynamic):Void {
-        if (result != null)
+        if (result != null) {
             activeTooltip = result;
+            activeTooltipShownAt = haxe.Timer.stamp();
+        }
     }
 
     @:hlx.prefix(st.Loadout.canSellItem)
@@ -908,6 +913,8 @@ class ItemUtilitiesMod {
             if (tip == null || fieldOrNull(tip, "parent") == null
                 || fieldOrNull(tip, "visible") == false)
                 return false;
+            if (haxe.Timer.stamp() - activeTooltipShownAt < TOOLTIP_BUTTON_DELAY)
+                return false;
 
             if (h2dObjectType == null)
                 h2dObjectType = HlxRuntime.resolveType("h2d.Object");
@@ -921,10 +928,16 @@ class ItemUtilitiesMod {
             var bounds:Dynamic = HlxRuntime.callResolved(getBoundsMember, [tip, null, null]);
             if (bounds == null)
                 return false;
-            var left:Float = cast HlxRuntime.resolveField(bounds, "xMin");
-            var top:Float = cast HlxRuntime.resolveField(bounds, "yMin");
-            var right:Float = cast HlxRuntime.resolveField(bounds, "xMax");
-            var bottom:Float = cast HlxRuntime.resolveField(bounds, "yMax");
+            // Ignore the tooltip's transparent outer padding/shadow so a
+            // merely adjacent tooltip does not make the button disappear.
+            var left:Float = cast HlxRuntime.resolveField(bounds, "xMin")
+                + TOOLTIP_OVERLAP_INSET;
+            var top:Float = cast HlxRuntime.resolveField(bounds, "yMin")
+                + TOOLTIP_OVERLAP_INSET;
+            var right:Float = cast HlxRuntime.resolveField(bounds, "xMax")
+                - TOOLTIP_OVERLAP_INSET;
+            var bottom:Float = cast HlxRuntime.resolveField(bounds, "yMax")
+                - TOOLTIP_OVERLAP_INSET;
             return x < right && x + width > left && y < bottom && y + height > top;
         } catch (error:Dynamic) {
             logLockError("tooltip bounds", error);
