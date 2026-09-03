@@ -1217,7 +1217,9 @@ class ItemUtilitiesMod {
             // its callback for this synthetic release so the inventory is not
             // sorted as a side effect.
             HlxRuntime.callResolved(setOnClickMember, [referenceButton, null]);
-            HlxRuntime.callResolved(releaseUiElementMember, [referenceButton]);
+            // release(event, playSound) has no optional arguments in the HL
+            // signature even though a synthetic click has no hxd.Event.
+            HlxRuntime.callResolved(releaseUiElementMember, [referenceButton, null, true]);
         } catch (error:Dynamic) {
             logLockError("button click sound", error);
         }
