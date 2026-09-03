@@ -60,7 +60,6 @@ class ItemUtilitiesMod {
     static var isMaxStackMember:hlx.runtime.ResolvedMember;
     static var getSlotStackSizeMember:hlx.runtime.ResolvedMember;
     static var getNextFreeIndexMember:hlx.runtime.ResolvedMember;
-    static var getItemStackMember:hlx.runtime.ResolvedMember;
     static var requestTransferMember:hlx.runtime.ResolvedMember;
     static var getMyHeroMember:hlx.runtime.ResolvedMember;
     static var arrayGetDynMember:hlx.runtime.ResolvedMember;
@@ -221,66 +220,6 @@ class ItemUtilitiesMod {
             return Continue;
         rejectActionCallback(callback);
         return SkipWith(null);
-    }
-
-    @:hlx.prefix(st.Loadout.canCompleteItem)
-    static function preventLockedRecycle(instance:Dynamic, item:Dynamic):HlxPrefixResult<Bool> {
-        return isRecyclerItemLocked(instance, item) ? SkipWith(false) : Continue;
-    }
-
-    // CharacterUI uses checkCompleteItem to decide whether an item can be
-    // placed into the Spark Recycler.
-    @:hlx.prefix(st.Loadout.checkCompleteItem)
-    static function preventLockedRecyclerSelection(instance:Dynamic,
-        item:Dynamic):HlxPrefixResult<Dynamic> {
-        return isRecyclerItemLocked(instance, item)
-            ? SkipWith(getLockedItemReason())
-            : Continue;
-    }
-
-    // The generated RPC wrapper invokes this implementation directly. This is
-    // the point where right click starts the Complete_Package skill.
-    @:hlx.prefix(st.Loadout.requestCompleteItem__impl)
-    static function preventLockedRecyclerSkill(instance:Dynamic,
-        item:Dynamic):HlxPrefixControl {
-        return isRecyclerItemLocked(instance, item) ? Skip : Continue;
-    }
-
-    // Both the recycler eligibility check and its final transaction converge
-    // here, including the drag-and-drop path.
-    @:hlx.prefix(st.Loadout.implInlineCompleteItem)
-    static function preventLockedInlineRecycle(instance:Dynamic, item:Dynamic,
-        mutate:Bool):HlxPrefixResult<Dynamic> {
-        return isRecyclerItemLocked(instance, item)
-            ? SkipWith(getLockedItemReason())
-            : Continue;
-    }
-
-    // This is the authoritative recycler implementation. It resolves the
-    // submitted UI item through Inventory.getItemStack before constructing the
-    // completion transaction, so guarding it covers both drag and right click.
-    @:hlx.prefix(st.Loadout.implCompleteItem)
-    static function preventLockedRecyclerImplementation(instance:Dynamic,
-        item:Dynamic):HlxPrefixResult<Dynamic> {
-        return isRecyclerItemLocked(instance, item)
-            ? SkipWith(getLockedItemReason())
-            : Continue;
-    }
-
-    @:hlx.prefix(st.Loadout.completeItem)
-    static function preventLockedRecycleRequest(instance:Dynamic, item:Dynamic,
-        callback:Dynamic):HlxPrefixResult<Dynamic> {
-        if (!isRecyclerItemLocked(instance, item))
-            return Continue;
-        rejectActionCallback(callback);
-        return SkipWith(null);
-    }
-
-    // The Spark Recycler submits through this hxbit request directly.
-    @:hlx.prefix(st.Loadout.requestCompleteItem)
-    static function preventLockedRecyclerRequest(instance:Dynamic,
-        item:Dynamic):HlxPrefixControl {
-        return isRecyclerItemLocked(instance, item) ? Skip : Continue;
     }
 
     @:hlx.prefix(st.Inventory.canRequestDropIndex)
@@ -1238,60 +1177,7 @@ class ItemUtilitiesMod {
     static function isItemLocked(item:Dynamic):Bool {
         if (!enabled.get() || item == null)
             return false;
-        var uid = itemUid(item);
-        if (uid == null)
-            return false;
-        if (hasLockUid(uid))
-            return true;
-
-        // Equipment slots can expose a UI-side item object whose UID differs
-        // from the authoritative item stored in st.Equipment. Right-click
-        // actions capture that displayed object, so resolve it through the
-        // exact visible slot before checking the underlying lock record.
-        for (entry in visibleSlots) {
-            var slot = entry == null ? null : entry.slot;
-            if (slot == null || fieldOrNull(slot, "parent") == null)
-                continue;
-            var displayed = fieldOrNull(slot, "item");
-            if (itemUid(displayed) != uid)
-                continue;
-            var authoritative = itemAt(entry.inventory, entry.index);
-            if (hasLockUid(itemUid(authoritative)))
-                return true;
-        }
-        return false;
-    }
-
-    static function isRecyclerItemLocked(loadout:Dynamic, item:Dynamic):Bool {
-        if (isItemLocked(item))
-            return true;
-        // A slot whose native lock badge is currently owned by this mod is an
-        // exact live identity match even if the UI and replicated item objects
-        // expose different hxbit UIDs.
-        for (entry in visibleSlots) {
-            if (entry == null || entry.modLocked != true)
-                continue;
-            var displayed = fieldOrNull(entry.slot, "item");
-            var authoritative = itemAt(entry.inventory, entry.index);
-            if (displayed == item || authoritative == item)
-                return true;
-        }
-        try {
-            var inventory = fieldOrNull(loadout, "inventory");
-            if (inventory == null)
-                return false;
-            if (inventoryType == null)
-                inventoryType = HlxRuntime.resolveType("st.Inventory");
-            if (inventoryType != null && getItemStackMember == null)
-                getItemStackMember = HlxRuntime.resolveMember(inventoryType, "getItemStack");
-            if (getItemStackMember == null)
-                return false;
-            var stack = HlxRuntime.callResolved(getItemStackMember, [inventory, item]);
-            return stack != null && isItemLocked(fieldOrNull(stack, "item"));
-        } catch (error:Dynamic) {
-            logLockError("recycler item resolution", error);
-            return false;
-        }
+        return hasLockUid(itemUid(item));
     }
 
     static function hasLockUid(uid:String):Bool {
