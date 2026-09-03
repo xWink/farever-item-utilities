@@ -238,6 +238,24 @@ class ItemUtilitiesMod {
             : Continue;
     }
 
+    // The generated RPC wrapper invokes this implementation directly. This is
+    // the point where right click starts the Complete_Package skill.
+    @:hlx.prefix(st.Loadout.requestCompleteItem__impl)
+    static function preventLockedRecyclerSkill(instance:Dynamic,
+        item:Dynamic):HlxPrefixControl {
+        return isRecyclerItemLocked(instance, item) ? Skip : Continue;
+    }
+
+    // Both the recycler eligibility check and its final transaction converge
+    // here, including the drag-and-drop path.
+    @:hlx.prefix(st.Loadout.implInlineCompleteItem)
+    static function preventLockedInlineRecycle(instance:Dynamic, item:Dynamic,
+        mutate:Bool):HlxPrefixResult<Dynamic> {
+        return isRecyclerItemLocked(instance, item)
+            ? SkipWith(getLockedItemReason())
+            : Continue;
+    }
+
     // This is the authoritative recycler implementation. It resolves the
     // submitted UI item through Inventory.getItemStack before constructing the
     // completion transaction, so guarding it covers both drag and right click.
@@ -1247,6 +1265,17 @@ class ItemUtilitiesMod {
     static function isRecyclerItemLocked(loadout:Dynamic, item:Dynamic):Bool {
         if (isItemLocked(item))
             return true;
+        // A slot whose native lock badge is currently owned by this mod is an
+        // exact live identity match even if the UI and replicated item objects
+        // expose different hxbit UIDs.
+        for (entry in visibleSlots) {
+            if (entry == null || entry.modLocked != true)
+                continue;
+            var displayed = fieldOrNull(entry.slot, "item");
+            var authoritative = itemAt(entry.inventory, entry.index);
+            if (displayed == item || authoritative == item)
+                return true;
+        }
         try {
             var inventory = fieldOrNull(loadout, "inventory");
             if (inventory == null)
