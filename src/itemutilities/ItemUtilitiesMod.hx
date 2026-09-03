@@ -1194,8 +1194,12 @@ class ItemUtilitiesMod {
     static function hasLockUid(uid:String):Bool {
         if (uid == null)
             return false;
+        var characterId = heroPersistentId(resolveHero());
+        if (characterId == null)
+            return false;
         for (record in lockRecords)
-            if (recordString(record, "uid") == uid)
+            if (recordString(record, "uid") == uid
+                && recordString(record, "characterId") == characterId)
                 return true;
         return false;
     }
@@ -1319,19 +1323,9 @@ class ItemUtilitiesMod {
     }
 
     static function recordAppliesToTrackedItem(record:Dynamic, tracked:Dynamic):Bool {
-        if (record == null || tracked == null)
+        if (record == null || tracked == null || tracked.characterId == null)
             return false;
-        // Inventory and equipment belong to a hero. Legacy records without a
-        // characterId are adopted only from their
-        // exact saved slot and gain the current ID on the next save.
-        var savedCharacterId = recordString(record, "characterId");
-        // Records produced by the previous build used a runtime object ID,
-        // which changes after reconnecting. Treat those as legacy so they can
-        // be adopted once from their exact saved slot and rewritten with the
-        // stable character key below.
-        if (savedCharacterId == null || !StringTools.startsWith(savedCharacterId, "name:"))
-            return true;
-        return tracked.characterId != null && savedCharacterId == tracked.characterId;
+        return recordString(record, "characterId") == tracked.characterId;
     }
 
     static function matchingUids(items:Map<String, Dynamic>, fingerprint:String):Array<String> {
@@ -1397,18 +1391,13 @@ class ItemUtilitiesMod {
     static function heroPersistentId(hero:Dynamic):String {
         if (hero == null)
             return null;
-        // hxbit's __uid (and the generated Hero.id observed in Farever) is a
-        // runtime object identity, not a persistent character identity. The
-        // character name is stable across sessions and unique for the account,
-        // so use it as the persisted character key.
-        var value = fieldOrNull(hero, "name");
-        if (value == null) {
-            var data = fieldOrNull(hero, "data");
-            value = fieldOrNull(data, "name");
-        }
-        if (value != null && Std.string(value).length > 0)
-            return "name:" + Std.string(value);
-        return null;
+        var player = fieldOrNull(hero, "player");
+        var heroData = fieldOrNull(player, "heroData");
+        var databaseId = fieldOrNull(heroData, "databaseID");
+        if (databaseId == null)
+            return null;
+        var value = Std.string(databaseId);
+        return value.length == 0 || value == "0" ? null : "db:" + value;
     }
 
     static function resolveHero():Dynamic {
@@ -1806,7 +1795,10 @@ class ItemUtilitiesMod {
                         var uid = recordString(record, "uid");
                         var fingerprint = recordString(record, "fingerprint");
                         var location = recordString(record, "location");
-                        if (uid != null && fingerprint != null && location != "bank") {
+                        var characterId = recordString(record, "characterId");
+                        if (uid != null && fingerprint != null && location != "bank"
+                            && characterId != null
+                            && StringTools.startsWith(characterId, "db:")) {
                             lockRecords.push({
                                 uid: uid,
                                 fingerprint: fingerprint,
@@ -1814,7 +1806,7 @@ class ItemUtilitiesMod {
                                 known: [],
                                 location: location,
                                 index: recordInt(record, "index", -1),
-                                characterId: recordString(record, "characterId"),
+                                characterId: characterId,
                                 restored: false
                             });
                         }
