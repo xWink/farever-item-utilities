@@ -2084,6 +2084,40 @@ class ItemUtilitiesMod {
         catch (_:Dynamic) return false;
     }
 
+    static function reloadConfigIfChanged():Void {
+        try {
+            if (!FileSystem.exists(CONFIG_PATH))
+                return;
+            var modified = FileSystem.stat(CONFIG_PATH).mtime.getTime();
+            if (modified == lastConfigModified)
+                return;
+            var data:Dynamic = Json.parse(File.getContent(CONFIG_PATH));
+            var wasEnabled = enabled.get();
+            if (Reflect.hasField(data, "enabled"))
+                enabled.set(Reflect.field(data, "enabled"));
+            if (Reflect.hasField(data, "showDepositMaterials"))
+                showDepositMaterials.set(Reflect.field(data, "showDepositMaterials"));
+            if (Reflect.hasField(data, "showLockVisuals"))
+                showLockVisuals.set(Reflect.field(data, "showLockVisuals"));
+            if (Reflect.hasField(data, "sortingIgnoresLockedItems"))
+                sortingIgnoresLockedItems.set(Reflect.field(data, "sortingIgnoresLockedItems"));
+            loadPresetHotkeyConfig(data);
+            if ((!enabled.get() && wasEnabled) || !showDepositMaterials.get())
+                cancelDeposit();
+            if (!enabled.get() || !showLockVisuals.get())
+                lockEditMode = false;
+            syncDepositButtonVisibility();
+            lastConfigModified = modified;
+        } catch (_:Dynamic) {}
+    }
+
+    static function updateConfigModifiedTime():Void {
+        try {
+            if (FileSystem.exists(CONFIG_PATH))
+                lastConfigModified = FileSystem.stat(CONFIG_PATH).mtime.getTime();
+        } catch (_:Dynamic) {}
+    }
+
     static function loadConfig():Void {
         try {
             if (!FileSystem.exists(CONFIG_PATH)) return;
