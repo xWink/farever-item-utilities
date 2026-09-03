@@ -32,6 +32,12 @@ class ItemUtilitiesMod {
     static var hotkeyAlt:Bool = false;
     static var hotkeySuper:Bool = false;
     static var capturingHotkey:Bool = false;
+    static var presetHotkeyKeys:Array<Int> = [0, 0, 0];
+    static var presetHotkeyCtrls:Array<Bool> = [false, false, false];
+    static var presetHotkeyShifts:Array<Bool> = [false, false, false];
+    static var presetHotkeyAlts:Array<Bool> = [false, false, false];
+    static var presetHotkeySupers:Array<Bool> = [false, false, false];
+    static var capturingPresetHotkey:Int = -1;
 
     static var activeBankWindow:Dynamic;
     static var activeInventoryUI:Dynamic;
@@ -411,7 +417,7 @@ class ItemUtilitiesMod {
     }
 
     static function draw():Void {
-        if (!capturingHotkey && hotkeyPressed())
+        if (!capturingHotkey && capturingPresetHotkey < 0 && hotkeyPressed())
             settingsOpen.set(!settingsOpen.get());
 
         if (settingsOpen.get())
@@ -425,6 +431,8 @@ class ItemUtilitiesMod {
                 lockEditMode = false;
             ensureHeroInventory();
             selectPlayerInventoryComp();
+            if (!capturingHotkey && capturingPresetHotkey < 0)
+                checkPresetHotkeys();
             reconcileItemLocks();
             drawWeaponPresetButtons();
             if (showLockVisuals.get()) {
@@ -514,6 +522,29 @@ class ItemUtilitiesMod {
             ImGui.text("Press a key combination...");
             ImGui.text("Hold Ctrl/Shift/Alt/Win, then press a key. Esc cancels.");
             captureNextHotkey();
+        }
+
+        ImGui.separator();
+        ImGui.text("Weapon preset hotkeys");
+        for (preset in 0...3) {
+            ImGui.text("Preset " + (preset + 1) + ": " + presetHotkeyLabel(preset));
+            ImGui.sameLine();
+            if (capturingPresetHotkey == preset) {
+                ImGui.text("Press a key combination...");
+                captureNextPresetHotkey(preset);
+            } else {
+                if (ImGui.button("Change##preset-hotkey-" + preset)) {
+                    capturingHotkey = false;
+                    capturingPresetHotkey = preset;
+                }
+                if (presetHotkeyKeys[preset] > 0) {
+                    ImGui.sameLine();
+                    if (ImGui.button("Clear##preset-hotkey-" + preset)) {
+                        clearPresetHotkey(preset);
+                        saveConfig();
+                    }
+                }
+            }
         }
 
         ImGui.end();
@@ -632,6 +663,7 @@ class ItemUtilitiesMod {
         ImGui.pushStyleColor(ImGuiCol.ButtonHovered, new ImVec4(0.541, 0.373, 0.275, 1));
         ImGui.pushStyleColor(ImGuiCol.ButtonActive, new ImVec4(0.60, 0.48, 0.43, 1));
         ImGui.pushStyleColor(ImGuiCol.Text, new ImVec4(0.98, 0.93, 0.90, 1));
+        ImGui.pushFont(ImGui.getFont(), 17.0);
         if (ImGui.begin("##item-utilities-weapon-presets", null, flags)) {
             ImGui.dummy(new ImVec2(56, height));
             var titleMin = ImGui.getItemRectMin();
@@ -674,6 +706,7 @@ class ItemUtilitiesMod {
                 setGameButtonCursor();
         }
         ImGui.end();
+        ImGui.popFont();
         ImGui.popStyleColor(4);
         ImGui.popStyleVar(2);
     }
@@ -2111,6 +2144,64 @@ class ItemUtilitiesMod {
             && modifierDown(ImGuiKey.LeftSuper, ImGuiKey.RightSuper) == hotkeySuper;
     }
 
+    static function checkPresetHotkeys():Void {
+        if (presetTransferActive)
+            return;
+        for (preset in 0...3) {
+            var key = presetHotkeyKeys[preset];
+            if (key > 0 && ImGui.isKeyPressed(key, false)
+                && modifierDown(ImGuiKey.LeftCtrl, ImGuiKey.RightCtrl) == presetHotkeyCtrls[preset]
+                && modifierDown(ImGuiKey.LeftShift, ImGuiKey.RightShift) == presetHotkeyShifts[preset]
+                && modifierDown(ImGuiKey.LeftAlt, ImGuiKey.RightAlt) == presetHotkeyAlts[preset]
+                && modifierDown(ImGuiKey.LeftSuper, ImGuiKey.RightSuper) == presetHotkeySupers[preset]) {
+                selectedWeaponPreset = preset;
+                activateWeaponPreset(preset);
+                return;
+            }
+        }
+    }
+
+    static function captureNextPresetHotkey(preset:Int):Void {
+        if (ImGui.isKeyPressed(ImGuiKey.Escape, false)) {
+            capturingPresetHotkey = -1;
+            return;
+        }
+        for (key in 512...632) {
+            if (isModifierKey(key) || key == ImGuiKey.Escape)
+                continue;
+            if (ImGui.isKeyPressed(key, false)) {
+                presetHotkeyKeys[preset] = key;
+                presetHotkeyCtrls[preset] = modifierDown(ImGuiKey.LeftCtrl, ImGuiKey.RightCtrl);
+                presetHotkeyShifts[preset] = modifierDown(ImGuiKey.LeftShift, ImGuiKey.RightShift);
+                presetHotkeyAlts[preset] = modifierDown(ImGuiKey.LeftAlt, ImGuiKey.RightAlt);
+                presetHotkeySupers[preset] = modifierDown(ImGuiKey.LeftSuper, ImGuiKey.RightSuper);
+                capturingPresetHotkey = -1;
+                saveConfig();
+                return;
+            }
+        }
+    }
+
+    static function clearPresetHotkey(preset:Int):Void {
+        presetHotkeyKeys[preset] = 0;
+        presetHotkeyCtrls[preset] = false;
+        presetHotkeyShifts[preset] = false;
+        presetHotkeyAlts[preset] = false;
+        presetHotkeySupers[preset] = false;
+    }
+
+    static function presetHotkeyLabel(preset:Int):String {
+        if (presetHotkeyKeys[preset] <= 0)
+            return "Not set";
+        var parts = new Array<String>();
+        if (presetHotkeyCtrls[preset]) parts.push("Ctrl");
+        if (presetHotkeyShifts[preset]) parts.push("Shift");
+        if (presetHotkeyAlts[preset]) parts.push("Alt");
+        if (presetHotkeySupers[preset]) parts.push("Win");
+        parts.push(keyLabel(presetHotkeyKeys[preset]));
+        return parts.join(" + ");
+    }
+
     static function captureNextHotkey():Void {
         if (ImGui.isKeyPressed(ImGuiKey.Escape, false)) {
             capturingHotkey = false;
@@ -2184,6 +2275,7 @@ class ItemUtilitiesMod {
             if (Reflect.hasField(data, "hotkeyShift")) hotkeyShift = Reflect.field(data, "hotkeyShift");
             if (Reflect.hasField(data, "hotkeyAlt")) hotkeyAlt = Reflect.field(data, "hotkeyAlt");
             if (Reflect.hasField(data, "hotkeySuper")) hotkeySuper = Reflect.field(data, "hotkeySuper");
+            loadPresetHotkeyConfig(data);
             if (Reflect.hasField(data, "hasSeenMenu")) hasSeenMenu = Reflect.field(data, "hasSeenMenu");
             else hasSeenMenu = true;
             if (Reflect.hasField(data, "weaponPresets")) {
@@ -2231,6 +2323,21 @@ class ItemUtilitiesMod {
         } catch (_:Dynamic) {}
     }
 
+    static function loadPresetHotkeyConfig(data:Dynamic):Void {
+        try {
+            var keys:Array<Int> = cast Reflect.field(data, "presetHotkeyKeys");
+            var ctrls:Array<Bool> = cast Reflect.field(data, "presetHotkeyCtrls");
+            var shifts:Array<Bool> = cast Reflect.field(data, "presetHotkeyShifts");
+            var alts:Array<Bool> = cast Reflect.field(data, "presetHotkeyAlts");
+            var supers:Array<Bool> = cast Reflect.field(data, "presetHotkeySupers");
+            if (keys != null && keys.length == 3) presetHotkeyKeys = keys;
+            if (ctrls != null && ctrls.length == 3) presetHotkeyCtrls = ctrls;
+            if (shifts != null && shifts.length == 3) presetHotkeyShifts = shifts;
+            if (alts != null && alts.length == 3) presetHotkeyAlts = alts;
+            if (supers != null && supers.length == 3) presetHotkeySupers = supers;
+        } catch (_:Dynamic) {}
+    }
+
     static function saveConfig():Void {
         var savedLocks:Array<Dynamic> = [];
         for (record in lockRecords) {
@@ -2252,6 +2359,11 @@ class ItemUtilitiesMod {
             hotkeyShift: hotkeyShift,
             hotkeyAlt: hotkeyAlt,
             hotkeySuper: hotkeySuper,
+            presetHotkeyKeys: presetHotkeyKeys,
+            presetHotkeyCtrls: presetHotkeyCtrls,
+            presetHotkeyShifts: presetHotkeyShifts,
+            presetHotkeyAlts: presetHotkeyAlts,
+            presetHotkeySupers: presetHotkeySupers,
             hasSeenMenu: hasSeenMenu,
             weaponPresets: weaponPresets,
             lockedItems: savedLocks
