@@ -558,7 +558,7 @@ class ItemUtilitiesMod {
             if (slot == null || entry.inventory != sourceInventory)
                 continue;
             var item = itemAt(entry.inventory, entry.index);
-            if (item == null || !isNonStackable(entry.inventory, entry.index))
+            if (item == null)
                 continue;
 
             var x:Float;
@@ -1249,18 +1249,6 @@ class ItemUtilitiesMod {
         } catch (error:Dynamic) {
             logLockError("fingerprint", error);
             return null;
-        }
-    }
-
-    static function isNonStackable(inventory:Dynamic, index:Int):Bool {
-        try {
-            if (!resolveMembers())
-                return false;
-            var maximum:Dynamic = HlxRuntime.callResolved(getSlotStackSizeMember, [inventory, index]);
-            return maximum != null && cast maximum <= 1;
-        } catch (error:Dynamic) {
-            logLockError("stackability", error);
-            return false;
         }
     }
 
