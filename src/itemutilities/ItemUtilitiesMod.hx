@@ -78,10 +78,8 @@ class ItemUtilitiesMod {
     static var addChildAtMember:hlx.runtime.ResolvedMember;
     static var inventoryWindowType:hl.Bytes;
     static var baseElementType:hl.Bytes;
-    static var inventorySlotType:hl.Bytes;
     static var getInventoryWindowHeroMember:hlx.runtime.ResolvedMember;
     static var getBaseElementHeroMember:hlx.runtime.ResolvedMember;
-    static var setSlotLockedMember:hlx.runtime.ResolvedMember;
     static var gameAppType:hl.Bytes;
     static var getGameAppFn:Dynamic;
     static var eReasonType:hl.Bytes;
@@ -191,7 +189,6 @@ class ItemUtilitiesMod {
     @:hlx.postfix(ui.win.InventorySlot.checkItemChanged)
     static function afterInventorySlotChanged(instance:Dynamic, force:hl.Ref<Bool>, result:Bool):Void {
         registerSlot(instance);
-        syncSlotLock(instance);
     }
 
     @:hlx.postfix(ui.BaseUI.setTip)
@@ -374,7 +371,7 @@ class ItemUtilitiesMod {
                 drawLockHeaderButton();
                 if (lockEditMode)
                     drawLockSlotOverlays();
-                syncAllSlotLocks();
+                drawLockedItemBadges();
             }
         }
 
@@ -398,7 +395,6 @@ class ItemUtilitiesMod {
             if (!enabled.get()) {
                 cancelDeposit();
                 lockEditMode = false;
-                clearSlotLocks();
             }
             syncDepositButtonVisibility();
             saveConfig();
@@ -419,7 +415,6 @@ class ItemUtilitiesMod {
         if (showLockVisuals.get() != oldLockVisuals) {
             if (!showLockVisuals.get()) {
                 lockEditMode = false;
-                clearSlotLocks();
             }
             saveConfig();
         }
@@ -433,7 +428,6 @@ class ItemUtilitiesMod {
             ImGui.text("Delete every saved item lock?");
             if (ImGui.button("Yes, delete all locks")) {
                 lockEditMode = false;
-                clearSlotLocks();
                 lockRecords = [];
                 lockScanInitialized = false;
                 confirmDeleteLocks = false;
@@ -637,6 +631,71 @@ class ItemUtilitiesMod {
             ImGui.end();
             ImGui.popStyleVar();
         }
+    }
+
+    static function drawLockedItemBadges():Void {
+        for (entry in visibleSlots) {
+            var slot:Dynamic = entry.slot;
+            if (!isUiVisible(slot))
+                continue;
+            var item = itemAt(entry.inventory, entry.index);
+            if (item == null)
+                item = fieldOrNull(slot, "item");
+            if (!isItemLocked(item))
+                continue;
+
+            var x:Float;
+            var y:Float;
+            try {
+                x = cast HlxRuntime.resolveField(slot, "absX");
+                y = cast HlxRuntime.resolveField(slot, "absY");
+            } catch (_:Dynamic) continue;
+
+            ImGui.setNextWindowPos(new ImVec2(x + 30, y + 2));
+            ImGui.setNextWindowBgAlpha(0);
+            var flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
+                | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings
+                | ImGuiWindowFlags.NoFocusOnAppearing | ImGuiWindowFlags.NoBackground
+                | ImGuiWindowFlags.NoInputs;
+            ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, new ImVec2(0, 0));
+            if (ImGui.begin("##item-lock-badge-" + itemUid(item), null, flags)) {
+                ImGui.invisibleButton("##badge", new ImVec2(16, 17));
+                drawSmallRedLockIcon();
+            }
+            ImGui.end();
+            ImGui.popStyleVar();
+        }
+    }
+
+    static function drawSmallRedLockIcon():Void {
+        var min = ImGui.getItemRectMin();
+        var drawList = ImGui.getWindowDrawList();
+        var red = ImGui.colorConvertFloat4ToU32(new ImVec4(0.90, 0.12, 0.12, 1));
+        var keyhole = ImGui.colorConvertFloat4ToU32(new ImVec4(0.35, 0.04, 0.04, 1));
+
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 5, min.y + 8),
+            new ImVec2(min.x + 5, min.y + 5), red, 2.0);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 5, min.y + 5),
+            new ImVec2(min.x + 7, min.y + 2), red, 2.0);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 7, min.y + 2),
+            new ImVec2(min.x + 10, min.y + 2), red, 2.0);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 10, min.y + 2),
+            new ImVec2(min.x + 12, min.y + 5), red, 2.0);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 12, min.y + 5),
+            new ImVec2(min.x + 12, min.y + 8), red, 2.0);
+        ImGui.ImDrawList_AddRectFilled(drawList,
+            new ImVec2(min.x + 3, min.y + 7),
+            new ImVec2(min.x + 14, min.y + 16), red, 2.0, 0);
+        ImGui.ImDrawList_AddCircleFilled(drawList,
+            new ImVec2(min.x + 8.5, min.y + 11), 1.25, keyhole, 8);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 8.5, min.y + 11),
+            new ImVec2(min.x + 8.5, min.y + 14), keyhole, 1.5);
     }
 
     static function drawDepositModeIcon(mode:Int):Void {
@@ -1113,7 +1172,7 @@ class ItemUtilitiesMod {
                 return;
             }
         }
-        visibleSlots.push({ inventory: inventory, index: index, slot: slot, modLocked: false });
+        visibleSlots.push({ inventory: inventory, index: index, slot: slot });
     }
 
     static function buttonCovered(x:Float, y:Float, width:Float, height:Float):Bool {
@@ -1203,7 +1262,6 @@ class ItemUtilitiesMod {
             if (recordString(lockRecords[index], "uid") == uid
                 && recordString(lockRecords[index], "characterId") == characterId) {
                 lockRecords.splice(index, 1);
-                syncAllSlotLocks();
                 saveConfig();
                 return;
             }
@@ -1223,7 +1281,6 @@ class ItemUtilitiesMod {
             characterId: tracked == null ? null : tracked.characterId,
             restored: true
         });
-        syncAllSlotLocks();
         saveConfig();
     }
 
@@ -1513,77 +1570,6 @@ class ItemUtilitiesMod {
             logLockError("fingerprint", error);
             return null;
         }
-    }
-
-    static function syncAllSlotLocks():Void {
-        for (entry in visibleSlots)
-            syncSlotLockEntry(entry);
-    }
-
-    static function syncSlotLock(slot:Dynamic):Void {
-        for (entry in visibleSlots) {
-            if (entry.slot == slot) {
-                syncSlotLockEntry(entry);
-                return;
-            }
-        }
-    }
-
-    static function syncSlotLockEntry(entry:Dynamic):Void {
-        var slot = entry == null ? null : entry.slot;
-        if (slot == null) return;
-        if (!showLockVisuals.get()) {
-            if (entry.modLocked == true && fieldOrNull(slot, "locked") == true)
-                setSlotLocked(slot, false);
-            entry.modLocked = false;
-            return;
-        }
-        try {
-            // Player inventory slots expose item directly, but bank slots do
-            // not reliably populate that UI field. The inventory content is
-            // authoritative for both and lets the native lock badge appear in
-            // the bank as well.
-            var item = itemAt(entry.inventory, entry.index);
-            if (item == null)
-                item = fieldOrNull(slot, "item");
-            var desired = isItemLocked(item);
-            var current = fieldOrNull(slot, "locked") == true;
-            if (desired) {
-                var lockedBmp = fieldOrNull(slot, "lockedBmp");
-                var badgeAttached = lockedBmp != null && fieldOrNull(lockedBmp, "parent") != null;
-                if (current && !badgeAttached)
-                    setSlotLocked(slot, false);
-                if (!current || !badgeAttached)
-                    setSlotLocked(slot, true);
-                entry.modLocked = true;
-            } else if (entry.modLocked == true) {
-                if (current)
-                    setSlotLocked(slot, false);
-                entry.modLocked = false;
-            }
-        } catch (error:Dynamic) logLockError("badge update", error);
-    }
-
-    static function clearSlotLocks():Void {
-        for (entry in visibleSlots) {
-            var slot = entry.slot;
-            if (slot != null && entry.modLocked == true) {
-                if (fieldOrNull(slot, "locked") == true)
-                    setSlotLocked(slot, false);
-                entry.modLocked = false;
-            }
-        }
-    }
-
-    static function setSlotLocked(slot:Dynamic, locked:Bool):Void {
-        try {
-            if (inventorySlotType == null)
-                inventorySlotType = HlxRuntime.resolveType("ui.win.InventorySlot");
-            if (inventorySlotType != null && setSlotLockedMember == null)
-                setSlotLockedMember = HlxRuntime.resolveMember(inventorySlotType, "set_locked");
-            if (setSlotLockedMember != null)
-                HlxRuntime.callResolved(setSlotLockedMember, [slot, locked]);
-        } catch (error:Dynamic) logLockError("badge setter", error);
     }
 
     static function playButtonClickSound(referenceButton:Dynamic):Void {
