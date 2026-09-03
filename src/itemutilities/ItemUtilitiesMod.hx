@@ -102,7 +102,9 @@ class ItemUtilitiesMod {
     static var lockEditMode:Bool = false;
     static var lockRecords:Array<Dynamic> = [];
     static var weaponPresets:Array<Dynamic> = [];
+    static var selectedWeaponPresets:Array<Dynamic> = [];
     static var selectedWeaponPreset:Int = 0;
+    static var selectedWeaponPresetCharacterId:String;
     static var presetEquipQueue:Array<Dynamic> = [];
     static var presetEquipPosition:Int = 0;
     static var presetEquipment:Dynamic;
@@ -180,7 +182,7 @@ class ItemUtilitiesMod {
     @:hlx.postfix(ui.win.CharacterUI.init)
     static function afterCharacterUIInit(instance:Dynamic, result:Void):Void {
         activeCharacterUI = instance;
-        selectedWeaponPreset = 0;
+        syncSelectedWeaponPreset();
     }
 
     @:hlx.postfix(ui.win.InventoryComp.init)
@@ -430,6 +432,7 @@ class ItemUtilitiesMod {
             if (activeInventoryUI == null || !isUiVisible(activeInventoryUI))
                 lockEditMode = false;
             ensureHeroInventory();
+            syncSelectedWeaponPreset();
             selectPlayerInventoryComp();
             if (!capturingHotkey && capturingPresetHotkey < 0)
                 checkPresetHotkeys();
@@ -663,7 +666,6 @@ class ItemUtilitiesMod {
         ImGui.pushStyleColor(ImGuiCol.ButtonHovered, new ImVec4(0.541, 0.373, 0.275, 1));
         ImGui.pushStyleColor(ImGuiCol.ButtonActive, new ImVec4(0.60, 0.48, 0.43, 1));
         ImGui.pushStyleColor(ImGuiCol.Text, new ImVec4(0.98, 0.93, 0.90, 1));
-        ImGui.pushFont(ImGui.getFont(), 17.0);
         if (ImGui.begin("##item-utilities-weapon-presets", null, flags)) {
             ImGui.dummy(new ImVec2(56, height));
             var titleMin = ImGui.getItemRectMin();
@@ -689,7 +691,7 @@ class ItemUtilitiesMod {
                 if (ImGui.button(Std.string(preset + 1) + "##weapon-preset",
                     new ImVec2(height, height))) {
                     playButtonClickSound(appearanceButton);
-                    selectedWeaponPreset = preset;
+                    selectWeaponPreset(preset);
                     activateWeaponPreset(preset);
                 }
                 if (selected)
@@ -706,9 +708,43 @@ class ItemUtilitiesMod {
                 setGameButtonCursor();
         }
         ImGui.end();
-        ImGui.popFont();
         ImGui.popStyleColor(4);
         ImGui.popStyleVar(2);
+    }
+
+    static function syncSelectedWeaponPreset():Void {
+        var characterId = heroPersistentId(resolveHero());
+        if (characterId == null || characterId == selectedWeaponPresetCharacterId)
+            return;
+        selectedWeaponPresetCharacterId = characterId;
+        selectedWeaponPreset = 0;
+        for (entry in selectedWeaponPresets) {
+            if (recordString(entry, "characterId") == characterId) {
+                var preset = recordInt(entry, "preset", 0);
+                if (preset >= 0 && preset < 3)
+                    selectedWeaponPreset = preset;
+                return;
+            }
+        }
+    }
+
+    static function selectWeaponPreset(preset:Int):Void {
+        if (preset < 0 || preset >= 3)
+            return;
+        var characterId = heroPersistentId(resolveHero());
+        if (characterId == null)
+            return;
+        selectedWeaponPresetCharacterId = characterId;
+        selectedWeaponPreset = preset;
+        for (entry in selectedWeaponPresets) {
+            if (recordString(entry, "characterId") == characterId) {
+                Reflect.setField(entry, "preset", preset);
+                saveConfig();
+                return;
+            }
+        }
+        selectedWeaponPresets.push({ characterId: characterId, preset: preset });
+        saveConfig();
     }
 
     static function hasWeaponPreset(preset:Int):Bool {
@@ -2154,7 +2190,7 @@ class ItemUtilitiesMod {
                 && modifierDown(ImGuiKey.LeftShift, ImGuiKey.RightShift) == presetHotkeyShifts[preset]
                 && modifierDown(ImGuiKey.LeftAlt, ImGuiKey.RightAlt) == presetHotkeyAlts[preset]
                 && modifierDown(ImGuiKey.LeftSuper, ImGuiKey.RightSuper) == presetHotkeySupers[preset]) {
-                selectedWeaponPreset = preset;
+                selectWeaponPreset(preset);
                 activateWeaponPreset(preset);
                 return;
             }
@@ -2278,6 +2314,23 @@ class ItemUtilitiesMod {
             loadPresetHotkeyConfig(data);
             if (Reflect.hasField(data, "hasSeenMenu")) hasSeenMenu = Reflect.field(data, "hasSeenMenu");
             else hasSeenMenu = true;
+            if (Reflect.hasField(data, "selectedWeaponPresets")) {
+                var savedSelections:Array<Dynamic> =
+                    cast Reflect.field(data, "selectedWeaponPresets");
+                if (savedSelections != null) {
+                    for (entry in savedSelections) {
+                        var selectionCharacterId = recordString(entry, "characterId");
+                        var selectedPreset = recordInt(entry, "preset", -1);
+                        if (selectionCharacterId != null
+                            && StringTools.startsWith(selectionCharacterId, "db:")
+                            && selectedPreset >= 0 && selectedPreset < 3)
+                            selectedWeaponPresets.push({
+                                characterId: selectionCharacterId,
+                                preset: selectedPreset
+                            });
+                    }
+                }
+            }
             if (Reflect.hasField(data, "weaponPresets")) {
                 var savedPresets:Array<Dynamic> = cast Reflect.field(data, "weaponPresets");
                 if (savedPresets != null) {
@@ -2366,6 +2419,7 @@ class ItemUtilitiesMod {
             presetHotkeySupers: presetHotkeySupers,
             hasSeenMenu: hasSeenMenu,
             weaponPresets: weaponPresets,
+            selectedWeaponPresets: selectedWeaponPresets,
             lockedItems: savedLocks
         }, null, "  ")) catch (_:Dynamic) {}
     }
