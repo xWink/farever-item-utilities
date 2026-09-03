@@ -95,6 +95,7 @@ class ItemUtilitiesMod {
     static var lockScanInitialized:Bool = false;
     static var activeHero:Dynamic;
     static var lockErrors:Map<String, Bool> = new Map();
+    static var recyclerLockedUiUids:Map<String, Bool> = new Map();
     static var activeTooltip:Dynamic;
     static var activeTooltipShownAt:Float = 0;
     static var activeBaseUI:Dynamic;
@@ -191,6 +192,13 @@ class ItemUtilitiesMod {
         syncSlotLock(instance);
     }
 
+    @:hlx.postfix(ui.win.CharacterUI.bindInventoryActions)
+    static function afterInventoryActionsBound(instance:Dynamic, slot:Dynamic,
+        result:Void):Void {
+        registerSlot(slot);
+        syncRecyclerSlot(slot);
+    }
+
     @:hlx.postfix(ui.BaseUI.setTip)
     static function afterTooltipSet(instance:Dynamic, element:Dynamic, anchor:Dynamic,
         position:Dynamic, nesting:Dynamic, result:Dynamic):Void {
@@ -220,6 +228,20 @@ class ItemUtilitiesMod {
             return Continue;
         rejectActionCallback(callback);
         return SkipWith(null);
+    }
+
+    @:hlx.prefix(st.Loadout.checkCompleteItem)
+    static function preventLockedRecyclerCheck(instance:Dynamic,
+        item:Dynamic):HlxPrefixResult<Dynamic> {
+        return isRecyclerUiItemLocked(item)
+            ? SkipWith(getLockedItemReason())
+            : Continue;
+    }
+
+    @:hlx.prefix(st.Loadout.requestCompleteItem)
+    static function preventLockedRecyclerRequest(instance:Dynamic,
+        item:Dynamic):HlxPrefixControl {
+        return isRecyclerUiItemLocked(item) ? Skip : Continue;
     }
 
     @:hlx.prefix(st.Inventory.canRequestDropIndex)
@@ -1465,6 +1487,34 @@ class ItemUtilitiesMod {
             syncSlotLockEntry(entry);
     }
 
+    static function syncRecyclerSlot(slot:Dynamic):Void {
+        for (entry in visibleSlots) {
+            if (entry != null && entry.slot == slot) {
+                var authoritative = itemAt(entry.inventory, entry.index);
+                syncRecyclerUiUid(slot, isItemLocked(authoritative));
+                return;
+            }
+        }
+    }
+
+    static function syncRecyclerUiUid(slot:Dynamic, locked:Bool):Void {
+        var uid = itemUid(fieldOrNull(slot, "item"));
+        if (uid == null)
+            return;
+        if (locked)
+            recyclerLockedUiUids.set(uid, true);
+        else
+            recyclerLockedUiUids.remove(uid);
+    }
+
+    static function isRecyclerUiItemLocked(item:Dynamic):Bool {
+        if (!enabled.get() || item == null)
+            return false;
+        var uid = itemUid(item);
+        return isItemLocked(item)
+            || (uid != null && recyclerLockedUiUids.exists(uid));
+    }
+
     static function syncSlotLock(slot:Dynamic):Void {
         for (entry in visibleSlots) {
             if (entry.slot == slot) {
@@ -1486,6 +1536,7 @@ class ItemUtilitiesMod {
             if (item == null)
                 item = fieldOrNull(slot, "item");
             var desired = isItemLocked(item);
+            syncRecyclerUiUid(slot, desired);
             var current = fieldOrNull(slot, "locked") == true;
             if (desired) {
                 var lockedBmp = fieldOrNull(slot, "lockedBmp");
