@@ -1174,18 +1174,22 @@ class ItemUtilitiesMod {
         var viewport = fieldOrNull(playerInventoryComp, "invContent");
         if (viewport == null || !isUiVisible(viewport))
             return false;
-        var width = fieldOrNull(viewport, "calculatedWidth");
-        var height = fieldOrNull(viewport, "calculatedHeight");
-        if (width == null || height == null || cast width <= 0 || cast height <= 0)
+        var rawWidth = fieldOrNull(viewport, "calculatedWidth");
+        var rawHeight = fieldOrNull(viewport, "calculatedHeight");
+        var rawLeft = fieldOrNull(viewport, "absX");
+        var rawTop = fieldOrNull(viewport, "absY");
+        if (rawWidth == null || rawHeight == null || rawLeft == null || rawTop == null)
             return false;
-        var left = fieldOrNull(viewport, "absX");
-        var top = fieldOrNull(viewport, "absY");
-        if (left == null || top == null)
+        var width:Float = cast rawWidth;
+        var height:Float = cast rawHeight;
+        var left:Float = cast rawLeft;
+        var top:Float = cast rawTop;
+        if (width <= 0 || height <= 0)
             return false;
-        var right:Float = cast left + cast width;
-        var bottom:Float = cast top + cast height;
-        return x < right && x + INVENTORY_SLOT_SIZE > cast left
-            && y < bottom && y + INVENTORY_SLOT_SIZE > cast top;
+        var right = left + width;
+        var bottom = top + height;
+        return x < right && x + INVENTORY_SLOT_SIZE > left
+            && y < bottom && y + INVENTORY_SLOT_SIZE > top;
     }
 
     static function registerSlot(slot:Dynamic):Void {
