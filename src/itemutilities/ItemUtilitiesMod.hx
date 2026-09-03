@@ -593,42 +593,50 @@ class ItemUtilitiesMod {
     }
 
     static function drawWeaponPresetButtons():Void {
-        if (activeCharacterUI == null || !isUiVisible(activeCharacterUI)
-            || activeInventoryUI == null || !isUiVisible(activeInventoryUI)
-            || playerInventoryComp == null)
+        if (activeCharacterUI == null || !isUiVisible(activeCharacterUI))
             return;
-        var sortButton = fieldOrNull(playerInventoryComp, "sortButton");
-        if (sortButton == null)
+        var appearanceButton = fieldOrNull(activeCharacterUI, "appearanceModeBtn");
+        if (appearanceButton == null || !isUiVisible(appearanceButton))
             return;
 
         var x:Float;
         var y:Float;
+        var width:Float = 150;
+        var height:Float = 36;
         try {
-            x = cast HlxRuntime.resolveField(sortButton, "absX");
-            y = cast HlxRuntime.resolveField(sortButton, "absY");
+            x = cast HlxRuntime.resolveField(appearanceButton, "absX");
+            y = cast HlxRuntime.resolveField(appearanceButton, "absY");
+            var rawWidth = fieldOrNull(appearanceButton, "calculatedWidth");
+            var rawHeight = fieldOrNull(appearanceButton, "calculatedHeight");
+            if (rawWidth != null && cast rawWidth > 0)
+                width = cast rawWidth;
+            if (rawHeight != null && cast rawHeight > 0)
+                height = cast rawHeight;
         } catch (_:Dynamic) return;
 
-        var left = x - 194;
-        if (buttonCovered(left, y, 150, 30))
-            return;
-        ImGui.setNextWindowPos(new ImVec2(left, y));
+        ImGui.setNextWindowPos(new ImVec2(x + width + 10, y));
         ImGui.setNextWindowBgAlpha(0);
         var flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
             | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings
             | ImGuiWindowFlags.NoFocusOnAppearing;
         ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, new ImVec2(0, 0));
-        ImGui.pushStyleVar(ImGuiStyleVar.FrameRounding, 5.0);
+        ImGui.pushStyleVar(ImGuiStyleVar.FrameRounding, 6.0);
+        ImGui.pushStyleColor(ImGuiCol.Button, new ImVec4(0.70, 0.59, 0.54, 1));
+        ImGui.pushStyleColor(ImGuiCol.ButtonHovered, new ImVec4(0.77, 0.65, 0.59, 1));
+        ImGui.pushStyleColor(ImGuiCol.ButtonActive, new ImVec4(0.60, 0.48, 0.43, 1));
+        ImGui.pushStyleColor(ImGuiCol.Text, new ImVec4(0.98, 0.93, 0.90, 1));
         if (ImGui.begin("##item-utilities-weapon-presets", null, flags)) {
             for (preset in 0...3) {
                 if (preset > 0)
                     ImGui.sameLine();
                 var selected = selectedWeaponPreset == preset;
                 if (selected) {
-                    ImGui.pushStyleColor(ImGuiCol.Button, new ImVec4(0.58, 0.43, 0.25, 1));
-                    ImGui.pushStyleColor(ImGuiCol.ButtonHovered, new ImVec4(0.68, 0.52, 0.31, 1));
-                    ImGui.pushStyleColor(ImGuiCol.ButtonActive, new ImVec4(0.49, 0.35, 0.20, 1));
+                    ImGui.pushStyleColor(ImGuiCol.Button, new ImVec4(0.55, 0.39, 0.34, 1));
+                    ImGui.pushStyleColor(ImGuiCol.ButtonHovered, new ImVec4(0.63, 0.46, 0.40, 1));
+                    ImGui.pushStyleColor(ImGuiCol.ButtonActive, new ImVec4(0.47, 0.32, 0.28, 1));
                 }
-                if (ImGui.button(Std.string(preset + 1) + "##weapon-preset", new ImVec2(30, 30))) {
+                if (ImGui.button(Std.string(preset + 1) + "##weapon-preset",
+                    new ImVec2(height, height))) {
                     selectedWeaponPreset = preset;
                     activateWeaponPreset(preset);
                 }
@@ -642,7 +650,7 @@ class ItemUtilitiesMod {
                 }
             }
             ImGui.sameLine();
-            if (ImGui.button("Set##weapon-preset", new ImVec2(48, 30)))
+            if (ImGui.button("Set##weapon-preset", new ImVec2(58, height)))
                 saveCurrentWeaponsToPreset(selectedWeaponPreset);
             if (ImGui.isItemHovered()) {
                 setGameButtonCursor();
@@ -651,6 +659,7 @@ class ItemUtilitiesMod {
             }
         }
         ImGui.end();
+        ImGui.popStyleColor(4);
         ImGui.popStyleVar(2);
     }
 
@@ -1526,6 +1535,7 @@ class ItemUtilitiesMod {
             for (index in 0...arrayLength(windows)) {
                 var window = arrayGet(windows, index);
                 if (window == null || window == activeBankWindow
+                    || window == activeCharacterUI
                     || window == activeInventoryWindow
                     || isAncestorOf(window, activeInventoryUI)
                     || isAncestorOf(window, playerInventoryComp))
