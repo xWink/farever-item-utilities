@@ -20,7 +20,7 @@ class ItemUtilitiesMod {
 
     static var enabled = new BoolRef(true);
     static var showDepositMaterials = new BoolRef(true);
-    static var showLockButton = new BoolRef(true);
+    static var itemLockingEnabled = new BoolRef(true);
     static var settingsOpen = new BoolRef(true);
     static var hasSeenMenu:Bool = false;
 
@@ -368,14 +368,13 @@ class ItemUtilitiesMod {
                 lockEditMode = false;
             ensureHeroInventory();
             selectPlayerInventoryComp();
-            reconcileItemLocks();
-            if (showLockButton.get())
+            if (itemLockingEnabled.get()) {
+                reconcileItemLocks();
                 drawLockHeaderButton();
-            else
-                lockEditMode = false;
-            if (lockEditMode)
-                drawLockSlotOverlays();
-            syncAllSlotLocks();
+                if (lockEditMode)
+                    drawLockSlotOverlays();
+                syncAllSlotLocks();
+            }
         }
 
     }
@@ -412,11 +411,17 @@ class ItemUtilitiesMod {
             saveConfig();
         }
 
-        var oldLockButton = showLockButton.get();
-        ImGui.checkbox("Show lock button", showLockButton);
-        if (showLockButton.get() != oldLockButton) {
-            if (!showLockButton.get())
+        var oldItemLocking = itemLockingEnabled.get();
+        ImGui.checkbox("Enable item locking", itemLockingEnabled);
+        if (ImGui.isItemHovered())
+            ImGui.setTooltip("Disabling item locking removes all saved locks.");
+        if (itemLockingEnabled.get() != oldItemLocking) {
+            if (!itemLockingEnabled.get()) {
                 lockEditMode = false;
+                clearSlotLocks();
+                lockRecords = [];
+                lockScanInitialized = false;
+            }
             saveConfig();
         }
 
@@ -1204,7 +1209,7 @@ class ItemUtilitiesMod {
     }
 
     static function isItemLocked(item:Dynamic):Bool {
-        if (!enabled.get() || item == null)
+        if (!enabled.get() || !itemLockingEnabled.get() || item == null)
             return false;
         return hasLockUid(itemUid(item));
     }
@@ -1812,7 +1817,8 @@ class ItemUtilitiesMod {
             var data:Dynamic = Json.parse(File.getContent(CONFIG_PATH));
             if (Reflect.hasField(data, "enabled")) enabled.set(Reflect.field(data, "enabled"));
             if (Reflect.hasField(data, "showDepositMaterials")) showDepositMaterials.set(Reflect.field(data, "showDepositMaterials"));
-            if (Reflect.hasField(data, "showLockButton")) showLockButton.set(Reflect.field(data, "showLockButton"));
+            if (Reflect.hasField(data, "itemLockingEnabled"))
+                itemLockingEnabled.set(Reflect.field(data, "itemLockingEnabled"));
             if (Reflect.hasField(data, "hotkeyKey")) hotkeyKey = cast Reflect.field(data, "hotkeyKey");
             if (Reflect.hasField(data, "hotkeyCtrl")) hotkeyCtrl = Reflect.field(data, "hotkeyCtrl");
             if (Reflect.hasField(data, "hotkeyShift")) hotkeyShift = Reflect.field(data, "hotkeyShift");
@@ -1862,7 +1868,7 @@ class ItemUtilitiesMod {
         try File.saveContent(CONFIG_PATH, Json.stringify({
             enabled: enabled.get(),
             showDepositMaterials: showDepositMaterials.get(),
-            showLockButton: showLockButton.get(),
+            itemLockingEnabled: itemLockingEnabled.get(),
             hotkeyKey: hotkeyKey,
             hotkeyCtrl: hotkeyCtrl,
             hotkeyShift: hotkeyShift,
