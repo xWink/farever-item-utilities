@@ -540,8 +540,8 @@ class ItemUtilitiesMod {
             // Bank InventorySlot does not render its native `locked` property,
             // so draw the same compact padlock treatment over the slot without
             // intercepting mouse input.
-            ImGui.setNextWindowPos(new ImVec2(x + 27, y + 2));
-            ImGui.setNextWindowSize(new ImVec2(19, 20));
+            ImGui.setNextWindowPos(new ImVec2(x, y));
+            ImGui.setNextWindowSize(new ImVec2(INVENTORY_SLOT_SIZE, INVENTORY_SLOT_SIZE));
             ImGui.setNextWindowBgAlpha(0);
             var flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
                 | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoFocusOnAppearing
@@ -552,19 +552,19 @@ class ItemUtilitiesMod {
                 var color = ImGui.colorConvertFloat4ToU32(new ImVec4(0.94, 0.89, 0.83, 1));
                 var shade = ImGui.colorConvertFloat4ToU32(new ImVec4(0.18, 0.16, 0.15, 0.80));
                 ImGui.ImDrawList_AddRectFilled(drawList,
-                    new ImVec2(x + 3, y + 9), new ImVec2(x + 16, y + 19), shade, 2.0, 0);
+                    new ImVec2(x + 30, y + 11), new ImVec2(x + 43, y + 21), shade, 2.0, 0);
                 ImGui.ImDrawList_AddRect(drawList,
-                    new ImVec2(x + 3, y + 9), new ImVec2(x + 16, y + 19), color, 2.0, 1.5, 0);
+                    new ImVec2(x + 30, y + 11), new ImVec2(x + 43, y + 21), color, 2.0, 1.5, 0);
                 ImGui.ImDrawList_AddLine(drawList,
-                    new ImVec2(x + 6, y + 9), new ImVec2(x + 6, y + 6), color, 1.5);
+                    new ImVec2(x + 33, y + 11), new ImVec2(x + 33, y + 8), color, 1.5);
                 ImGui.ImDrawList_AddLine(drawList,
-                    new ImVec2(x + 6, y + 6), new ImVec2(x + 8, y + 3), color, 1.5);
+                    new ImVec2(x + 33, y + 8), new ImVec2(x + 35, y + 5), color, 1.5);
                 ImGui.ImDrawList_AddLine(drawList,
-                    new ImVec2(x + 8, y + 3), new ImVec2(x + 12, y + 3), color, 1.5);
+                    new ImVec2(x + 35, y + 5), new ImVec2(x + 39, y + 5), color, 1.5);
                 ImGui.ImDrawList_AddLine(drawList,
-                    new ImVec2(x + 12, y + 3), new ImVec2(x + 14, y + 6), color, 1.5);
+                    new ImVec2(x + 39, y + 5), new ImVec2(x + 41, y + 8), color, 1.5);
                 ImGui.ImDrawList_AddLine(drawList,
-                    new ImVec2(x + 14, y + 6), new ImVec2(x + 14, y + 9), color, 1.5);
+                    new ImVec2(x + 41, y + 8), new ImVec2(x + 41, y + 11), color, 1.5);
             }
             ImGui.end();
             ImGui.popStyleVar();
@@ -1276,9 +1276,9 @@ class ItemUtilitiesMod {
             // its callback for this synthetic release so the inventory is not
             // sorted as a side effect.
             HlxRuntime.callResolved(setOnClickMember, [referenceButton, null]);
-            // The HL signature is release(playSound, event). A synthetic click
-            // has no hxd.Event, but should follow the normal sound path.
-            HlxRuntime.callResolved(releaseUiElementMember, [referenceButton, true, null]);
+            // The HL signature is release(soundName, event). This is the same
+            // default sound name used by Farever's interactive UI buttons.
+            HlxRuntime.callResolved(releaseUiElementMember, [referenceButton, "button", null]);
         } catch (error:Dynamic) {
             logLockError("button click sound", error);
         }
