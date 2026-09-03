@@ -358,28 +358,26 @@ class ItemUtilitiesMod {
             return Continue;
         }
 
-        // requestSort requires a complete permutation. Preserve each locked
-        // destination by mapping that slot to itself, then fill every other
-        // destination with the game's already-sorted unlocked source indexes.
-        for (lockedIndex in lockedSources.keys()) {
-            if (lockedIndex < 0 || lockedIndex >= indexes.length) {
-                trace("[ItemUtilities][Sort] locked source " + lockedIndex
-                    + " is outside destination range 0..." + indexes.length
-                    + "; returning successful no-op");
-                if (callback != null)
-                    try Reflect.callMethod(null, callback, [true]) catch (_:Dynamic) {}
-                return SkipWith(null);
-            }
-        }
+        // The normal request is compact and contains only occupied source
+        // indexes. Extend it through the last occupied slot so locked items in
+        // sparse lower rows can remain at their exact destinations. -1 denotes
+        // an empty destination in Inventory's integer sort layout.
+        var content = getContent(instance);
+        var layoutLength = indexes.length;
+        for (slotIndex in 0...arrayLength(content))
+            if (itemAt(instance, slotIndex) != null && slotIndex + 1 > layoutLength)
+                layoutLength = slotIndex + 1;
+        indexes.resize(layoutLength);
 
         var unlockedIndex = 0;
-        for (destinationIndex in 0...indexes.length) {
+        for (destinationIndex in 0...layoutLength) {
             if (lockedSources.exists(destinationIndex))
                 indexes[destinationIndex] = destinationIndex;
-            else {
+            else if (unlockedIndex < unlockedSorted.length) {
                 indexes[destinationIndex] = unlockedSorted[unlockedIndex];
                 unlockedIndex++;
-            }
+            } else
+                indexes[destinationIndex] = -1;
         }
         trace("[ItemUtilities][Sort] rewritten=" + describeSortIndexes(instance, indexes));
         return Continue;
