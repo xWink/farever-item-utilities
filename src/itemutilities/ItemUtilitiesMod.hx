@@ -942,7 +942,9 @@ class ItemUtilitiesMod {
             for (index in 0...arrayLength(windows)) {
                 var window = arrayGet(windows, index);
                 if (window == null || window == activeBankWindow
-                    || window == activeInventoryWindow)
+                    || window == activeInventoryWindow
+                    || isAncestorOf(window, activeInventoryUI)
+                    || isAncestorOf(window, playerInventoryComp))
                     continue;
                 if (fieldOrNull(window, "parent") == null
                     || fieldOrNull(window, "visible") == false)
@@ -952,6 +954,18 @@ class ItemUtilitiesMod {
             }
         } catch (error:Dynamic) {
             logLockError("window bounds", error);
+        }
+        return false;
+    }
+
+    static function isAncestorOf(ancestor:Dynamic, object:Dynamic):Bool {
+        if (ancestor == null || object == null)
+            return false;
+        var current = object;
+        while (current != null) {
+            if (current == ancestor)
+                return true;
+            current = fieldOrNull(current, "parent");
         }
         return false;
     }
