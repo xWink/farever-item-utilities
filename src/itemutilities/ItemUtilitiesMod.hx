@@ -1178,7 +1178,7 @@ class ItemUtilitiesMod {
         return true;
     }
 
-    static function inventoryViewportBounds():Dynamic {
+    static function inventoryViewportBounds():{ left:Float, top:Float, right:Float, bottom:Float } {
         var viewport = fieldOrNull(playerInventoryComp, "invContent");
         if (viewport == null || !isUiVisible(viewport))
             return null;
