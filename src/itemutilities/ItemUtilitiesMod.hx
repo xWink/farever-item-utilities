@@ -22,22 +22,7 @@ class ItemUtilitiesMod {
     static var showDepositMaterials = new BoolRef(true);
     static var showLockVisuals = new BoolRef(true);
     static var sortingIgnoresLockedItems = new BoolRef(false);
-    static var settingsOpen = new BoolRef(true);
-    static var hasSeenMenu:Bool = false;
-    static var confirmDeleteLocks:Bool = false;
-
-    static var hotkeyKey:Int = ImGuiKey.F9;
-    static var hotkeyCtrl:Bool = false;
-    static var hotkeyShift:Bool = false;
-    static var hotkeyAlt:Bool = false;
-    static var hotkeySuper:Bool = false;
-    static var capturingHotkey:Bool = false;
     static var presetHotkeyKeys:Array<Int> = [0, 0, 0];
-    static var presetHotkeyCtrls:Array<Bool> = [false, false, false];
-    static var presetHotkeyShifts:Array<Bool> = [false, false, false];
-    static var presetHotkeyAlts:Array<Bool> = [false, false, false];
-    static var presetHotkeySupers:Array<Bool> = [false, false, false];
-    static var capturingPresetHotkey:Int = -1;
     static var lastConfigModified:Float = -1.0;
     static var configCheckTimer:Float = 0.0;
 
@@ -91,6 +76,8 @@ class ItemUtilitiesMod {
     static var getInventoryWindowHeroMember:hlx.runtime.ResolvedMember;
     static var getBaseElementHeroMember:hlx.runtime.ResolvedMember;
     static var gameAppType:hl.Bytes;
+    static var hxdKeyType:hl.Bytes;
+    static var isKeyPressedMember:hlx.runtime.ResolvedMember;
     static var getGameAppFn:Dynamic;
     static var eReasonType:hl.Bytes;
     static var lockedItemReason:Dynamic;
@@ -133,7 +120,6 @@ class ItemUtilitiesMod {
         if (!FileSystem.exists(CONFIG_PATH))
             saveConfig();
         updateConfigModifiedTime();
-        settingsOpen.set(!hasSeenMenu);
         ImGui.register(HlxRuntime.moduleName(), draw);
     }
 
@@ -433,12 +419,6 @@ class ItemUtilitiesMod {
     }
 
     static function draw():Void {
-        if (!capturingHotkey && capturingPresetHotkey < 0 && hotkeyPressed())
-            settingsOpen.set(!settingsOpen.get());
-
-        if (settingsOpen.get())
-            drawSettings();
-
         if (activeBankWindow != null && enabled.get() && showDepositMaterials.get())
             drawBankHeaderButton();
 
@@ -448,8 +428,7 @@ class ItemUtilitiesMod {
             ensureHeroInventory();
             syncSelectedWeaponPreset();
             selectPlayerInventoryComp();
-            if (!capturingHotkey && capturingPresetHotkey < 0)
-                checkPresetHotkeys();
+            checkPresetHotkeys();
             reconcileItemLocks();
             drawWeaponPresetButtons();
             if (showLockVisuals.get()) {
@@ -460,111 +439,6 @@ class ItemUtilitiesMod {
             }
         }
 
-    }
-
-    static function drawSettings():Void {
-        ImGui.setNextWindowBgAlpha(0.98);
-        if (!ImGui.begin("Item Utilities Settings", settingsOpen)) {
-            ImGui.end();
-            return;
-        }
-
-        if (!hasSeenMenu) {
-            hasSeenMenu = true;
-            saveConfig();
-        }
-
-        var oldEnabled = enabled.get();
-        ImGui.checkbox("Enable item utilities", enabled);
-        if (enabled.get() != oldEnabled) {
-            if (!enabled.get()) {
-                cancelDeposit();
-                lockEditMode = false;
-            }
-            syncDepositButtonVisibility();
-            saveConfig();
-        }
-
-        var oldDeposit = showDepositMaterials.get();
-        ImGui.checkbox("Show deposit buttons", showDepositMaterials);
-        if (showDepositMaterials.get() != oldDeposit) {
-            if (!showDepositMaterials.get()) cancelDeposit();
-            syncDepositButtonVisibility();
-            saveConfig();
-        }
-
-        var oldLockVisuals = showLockVisuals.get();
-        ImGui.checkbox("Show item locking visuals", showLockVisuals);
-        if (ImGui.isItemHovered())
-            ImGui.setTooltip("Shows the lock button and lock badges. Hidden locks remain active.");
-        if (showLockVisuals.get() != oldLockVisuals) {
-            if (!showLockVisuals.get()) {
-                lockEditMode = false;
-            }
-            saveConfig();
-        }
-
-        var oldSortIgnoresLocks = sortingIgnoresLockedItems.get();
-        ImGui.checkbox("Sorting preserves order of locked items", sortingIgnoresLockedItems);
-        if (ImGui.isItemHovered())
-            ImGui.setTooltip("Sorting will compact but not rearrange locked items. Best used with locked items being first in the inventory");
-        if (sortingIgnoresLockedItems.get() != oldSortIgnoresLocks)
-            saveConfig();
-
-        if (!confirmDeleteLocks) {
-            if (ImGui.button("Delete all saved locks"))
-                confirmDeleteLocks = true;
-            if (ImGui.isItemHovered())
-                ImGui.setTooltip("Permanently removes every saved item lock.");
-        } else {
-            ImGui.text("Delete every saved item lock?");
-            if (ImGui.button("Yes, delete all locks")) {
-                lockEditMode = false;
-                lockRecords = [];
-                lockScanInitialized = false;
-                confirmDeleteLocks = false;
-                saveConfig();
-            }
-            ImGui.sameLine();
-            if (ImGui.button("Cancel"))
-                confirmDeleteLocks = false;
-        }
-
-        ImGui.separator();
-        ImGui.text("Open settings hotkey: " + hotkeyLabel());
-        if (!capturingHotkey) {
-            if (ImGui.button("Change hotkey"))
-                capturingHotkey = true;
-        } else {
-            ImGui.text("Press a key combination...");
-            ImGui.text("Hold Ctrl/Shift/Alt/Win, then press a key. Esc cancels.");
-            captureNextHotkey();
-        }
-
-        ImGui.separator();
-        ImGui.text("Weapon preset hotkeys");
-        for (preset in 0...3) {
-            ImGui.text("Preset " + (preset + 1) + ": " + presetHotkeyLabel(preset));
-            ImGui.sameLine();
-            if (capturingPresetHotkey == preset) {
-                ImGui.text("Press a key combination...");
-                captureNextPresetHotkey(preset);
-            } else {
-                if (ImGui.button("Change##preset-hotkey-" + preset)) {
-                    capturingHotkey = false;
-                    capturingPresetHotkey = preset;
-                }
-                if (presetHotkeyKeys[preset] > 0) {
-                    ImGui.sameLine();
-                    if (ImGui.button("Clear##preset-hotkey-" + preset)) {
-                        clearPresetHotkey(preset);
-                        saveConfig();
-                    }
-                }
-            }
-        }
-
-        ImGui.end();
     }
 
     static function drawBankHeaderButton():Void {
@@ -2186,24 +2060,12 @@ class ItemUtilitiesMod {
         transferPosition = 0;
     }
 
-    static function hotkeyPressed():Bool {
-        if (!ImGui.isKeyPressed(hotkeyKey, false)) return false;
-        return modifierDown(ImGuiKey.LeftCtrl, ImGuiKey.RightCtrl) == hotkeyCtrl
-            && modifierDown(ImGuiKey.LeftShift, ImGuiKey.RightShift) == hotkeyShift
-            && modifierDown(ImGuiKey.LeftAlt, ImGuiKey.RightAlt) == hotkeyAlt
-            && modifierDown(ImGuiKey.LeftSuper, ImGuiKey.RightSuper) == hotkeySuper;
-    }
-
     static function checkPresetHotkeys():Void {
         if (presetTransferActive)
             return;
         for (preset in 0...3) {
             var key = presetHotkeyKeys[preset];
-            if (key > 0 && ImGui.isKeyPressed(key, false)
-                && modifierDown(ImGuiKey.LeftCtrl, ImGuiKey.RightCtrl) == presetHotkeyCtrls[preset]
-                && modifierDown(ImGuiKey.LeftShift, ImGuiKey.RightShift) == presetHotkeyShifts[preset]
-                && modifierDown(ImGuiKey.LeftAlt, ImGuiKey.RightAlt) == presetHotkeyAlts[preset]
-                && modifierDown(ImGuiKey.LeftSuper, ImGuiKey.RightSuper) == presetHotkeySupers[preset]) {
+            if (key > 0 && isGameKeyPressed(key)) {
                 selectWeaponPreset(preset);
                 activateWeaponPreset(preset);
                 return;
@@ -2211,138 +2073,15 @@ class ItemUtilitiesMod {
         }
     }
 
-    static function captureNextPresetHotkey(preset:Int):Void {
-        if (ImGui.isKeyPressed(ImGuiKey.Escape, false)) {
-            capturingPresetHotkey = -1;
-            return;
-        }
-        for (key in 512...632) {
-            if (isModifierKey(key) || key == ImGuiKey.Escape)
-                continue;
-            if (ImGui.isKeyPressed(key, false)) {
-                presetHotkeyKeys[preset] = key;
-                presetHotkeyCtrls[preset] = modifierDown(ImGuiKey.LeftCtrl, ImGuiKey.RightCtrl);
-                presetHotkeyShifts[preset] = modifierDown(ImGuiKey.LeftShift, ImGuiKey.RightShift);
-                presetHotkeyAlts[preset] = modifierDown(ImGuiKey.LeftAlt, ImGuiKey.RightAlt);
-                presetHotkeySupers[preset] = modifierDown(ImGuiKey.LeftSuper, ImGuiKey.RightSuper);
-                capturingPresetHotkey = -1;
-                saveConfig();
-                return;
-            }
-        }
-    }
-
-    static function clearPresetHotkey(preset:Int):Void {
-        presetHotkeyKeys[preset] = 0;
-        presetHotkeyCtrls[preset] = false;
-        presetHotkeyShifts[preset] = false;
-        presetHotkeyAlts[preset] = false;
-        presetHotkeySupers[preset] = false;
-    }
-
-    static function presetHotkeyLabel(preset:Int):String {
-        if (presetHotkeyKeys[preset] <= 0)
-            return "Not set";
-        var parts = new Array<String>();
-        if (presetHotkeyCtrls[preset]) parts.push("Ctrl");
-        if (presetHotkeyShifts[preset]) parts.push("Shift");
-        if (presetHotkeyAlts[preset]) parts.push("Alt");
-        if (presetHotkeySupers[preset]) parts.push("Win");
-        parts.push(keyLabel(presetHotkeyKeys[preset]));
-        return parts.join(" + ");
-    }
-
-    static function captureNextHotkey():Void {
-        if (ImGui.isKeyPressed(ImGuiKey.Escape, false)) {
-            capturingHotkey = false;
-            return;
-        }
-        for (key in 512...632) {
-            if (isModifierKey(key) || key == ImGuiKey.Escape) continue;
-            if (ImGui.isKeyPressed(key, false)) {
-                hotkeyKey = key;
-                hotkeyCtrl = modifierDown(ImGuiKey.LeftCtrl, ImGuiKey.RightCtrl);
-                hotkeyShift = modifierDown(ImGuiKey.LeftShift, ImGuiKey.RightShift);
-                hotkeyAlt = modifierDown(ImGuiKey.LeftAlt, ImGuiKey.RightAlt);
-                hotkeySuper = modifierDown(ImGuiKey.LeftSuper, ImGuiKey.RightSuper);
-                capturingHotkey = false;
-                saveConfig();
-                return;
-            }
-        }
-    }
-
-    static inline function modifierDown(left:Int, right:Int):Bool
-        return ImGui.isKeyDown(left) || ImGui.isKeyDown(right);
-
-    static inline function isModifierKey(key:Int):Bool
-        return key >= ImGuiKey.LeftCtrl && key <= ImGuiKey.RightSuper;
-
-    static function hotkeyLabel():String {
-        var parts = new Array<String>();
-        if (hotkeyCtrl) parts.push("Ctrl");
-        if (hotkeyShift) parts.push("Shift");
-        if (hotkeyAlt) parts.push("Alt");
-        if (hotkeySuper) parts.push("Win");
-        parts.push(keyLabel(hotkeyKey));
-        return parts.join(" + ");
-    }
-
-    static function keyLabel(key:Int):String {
-        if (key >= ImGuiKey._0 && key <= ImGuiKey._9) return String.fromCharCode(48 + key - ImGuiKey._0);
-        if (key >= ImGuiKey.A && key <= ImGuiKey.Z) return String.fromCharCode(65 + key - ImGuiKey.A);
-        if (key >= ImGuiKey.F1 && key <= ImGuiKey.F24) return "F" + (key - ImGuiKey.F1 + 1);
-        return switch (key) {
-            case ImGuiKey.Tab: "Tab";
-            case ImGuiKey.Space: "Space";
-            case ImGuiKey.Enter: "Enter";
-            case ImGuiKey.Insert: "Insert";
-            case ImGuiKey.Delete: "Delete";
-            case ImGuiKey.Home: "Home";
-            case ImGuiKey.End: "End";
-            case ImGuiKey.PageUp: "Page Up";
-            case ImGuiKey.PageDown: "Page Down";
-            case ImGuiKey.LeftArrow: "Left";
-            case ImGuiKey.RightArrow: "Right";
-            case ImGuiKey.UpArrow: "Up";
-            case ImGuiKey.DownArrow: "Down";
-            default: "Key " + key;
-        };
-    }
-
-    static function reloadConfigIfChanged():Void {
-        try {
-            if (!FileSystem.exists(CONFIG_PATH))
-                return;
-            var modified = FileSystem.stat(CONFIG_PATH).mtime.getTime();
-            if (modified == lastConfigModified)
-                return;
-
-            var data:Dynamic = Json.parse(File.getContent(CONFIG_PATH));
-            var wasEnabled = enabled.get();
-            if (Reflect.hasField(data, "enabled"))
-                enabled.set(Reflect.field(data, "enabled"));
-            if (Reflect.hasField(data, "showDepositMaterials"))
-                showDepositMaterials.set(Reflect.field(data, "showDepositMaterials"));
-            if (Reflect.hasField(data, "showLockVisuals"))
-                showLockVisuals.set(Reflect.field(data, "showLockVisuals"));
-            if (Reflect.hasField(data, "sortingIgnoresLockedItems"))
-                sortingIgnoresLockedItems.set(Reflect.field(data, "sortingIgnoresLockedItems"));
-
-            if ((!enabled.get() && wasEnabled) || !showDepositMaterials.get())
-                cancelDeposit();
-            if (!enabled.get() || !showLockVisuals.get())
-                lockEditMode = false;
-            syncDepositButtonVisibility();
-            lastConfigModified = modified;
-        } catch (_:Dynamic) {}
-    }
-
-    static function updateConfigModifiedTime():Void {
-        try {
-            if (FileSystem.exists(CONFIG_PATH))
-                lastConfigModified = FileSystem.stat(CONFIG_PATH).mtime.getTime();
-        } catch (_:Dynamic) {}
+    static function isGameKeyPressed(keyCode:Int):Bool {
+        if (hxdKeyType == null)
+            hxdKeyType = HlxRuntime.resolveType("hxd.Key");
+        if (hxdKeyType != null && isKeyPressedMember == null)
+            isKeyPressedMember = HlxRuntime.resolveStaticMember(hxdKeyType, "isPressed");
+        if (isKeyPressedMember == null)
+            return false;
+        try return HlxRuntime.callResolved(isKeyPressedMember, [keyCode]) == true
+        catch (_:Dynamic) return false;
     }
 
     static function loadConfig():Void {
@@ -2355,14 +2094,7 @@ class ItemUtilitiesMod {
                 showLockVisuals.set(Reflect.field(data, "showLockVisuals"));
             if (Reflect.hasField(data, "sortingIgnoresLockedItems"))
                 sortingIgnoresLockedItems.set(Reflect.field(data, "sortingIgnoresLockedItems"));
-            if (Reflect.hasField(data, "hotkeyKey")) hotkeyKey = cast Reflect.field(data, "hotkeyKey");
-            if (Reflect.hasField(data, "hotkeyCtrl")) hotkeyCtrl = Reflect.field(data, "hotkeyCtrl");
-            if (Reflect.hasField(data, "hotkeyShift")) hotkeyShift = Reflect.field(data, "hotkeyShift");
-            if (Reflect.hasField(data, "hotkeyAlt")) hotkeyAlt = Reflect.field(data, "hotkeyAlt");
-            if (Reflect.hasField(data, "hotkeySuper")) hotkeySuper = Reflect.field(data, "hotkeySuper");
             loadPresetHotkeyConfig(data);
-            if (Reflect.hasField(data, "hasSeenMenu")) hasSeenMenu = Reflect.field(data, "hasSeenMenu");
-            else hasSeenMenu = true;
             if (Reflect.hasField(data, "selectedWeaponPresets")) {
                 var savedSelections:Array<Dynamic> =
                     cast Reflect.field(data, "selectedWeaponPresets");
@@ -2426,18 +2158,11 @@ class ItemUtilitiesMod {
     }
 
     static function loadPresetHotkeyConfig(data:Dynamic):Void {
-        try {
-            var keys:Array<Int> = cast Reflect.field(data, "presetHotkeyKeys");
-            var ctrls:Array<Bool> = cast Reflect.field(data, "presetHotkeyCtrls");
-            var shifts:Array<Bool> = cast Reflect.field(data, "presetHotkeyShifts");
-            var alts:Array<Bool> = cast Reflect.field(data, "presetHotkeyAlts");
-            var supers:Array<Bool> = cast Reflect.field(data, "presetHotkeySupers");
-            if (keys != null && keys.length == 3) presetHotkeyKeys = keys;
-            if (ctrls != null && ctrls.length == 3) presetHotkeyCtrls = ctrls;
-            if (shifts != null && shifts.length == 3) presetHotkeyShifts = shifts;
-            if (alts != null && alts.length == 3) presetHotkeyAlts = alts;
-            if (supers != null && supers.length == 3) presetHotkeySupers = supers;
-        } catch (_:Dynamic) {}
+        for (preset in 0...3) {
+            var field = "preset" + (preset + 1) + "Hotkey";
+            if (Reflect.hasField(data, field))
+                presetHotkeyKeys[preset] = cast Reflect.field(data, field);
+        }
     }
 
     static function saveConfig():Void {
@@ -2457,17 +2182,9 @@ class ItemUtilitiesMod {
             showDepositMaterials: showDepositMaterials.get(),
             showLockVisuals: showLockVisuals.get(),
             sortingIgnoresLockedItems: sortingIgnoresLockedItems.get(),
-            hotkeyKey: hotkeyKey,
-            hotkeyCtrl: hotkeyCtrl,
-            hotkeyShift: hotkeyShift,
-            hotkeyAlt: hotkeyAlt,
-            hotkeySuper: hotkeySuper,
-            presetHotkeyKeys: presetHotkeyKeys,
-            presetHotkeyCtrls: presetHotkeyCtrls,
-            presetHotkeyShifts: presetHotkeyShifts,
-            presetHotkeyAlts: presetHotkeyAlts,
-            presetHotkeySupers: presetHotkeySupers,
-            hasSeenMenu: hasSeenMenu,
+            preset1Hotkey: presetHotkeyKeys[0],
+            preset2Hotkey: presetHotkeyKeys[1],
+            preset3Hotkey: presetHotkeyKeys[2],
             weaponPresets: weaponPresets,
             selectedWeaponPresets: selectedWeaponPresets,
             lockedItems: savedLocks
