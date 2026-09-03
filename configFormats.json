@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "displayName": "Item Utilities",
+  "configFile": "config.json",
+  "configs": [
+    {
+      "key": "enabled",
+      "type": "checkbox",
+      "label": "Enabled"
+    },
+    {
+      "key": "showDepositMaterials",
+      "type": "checkbox",
+      "label": "Show deposit buttons"
+    },
+    {
+      "key": "showLockVisuals",
+      "type": "checkbox",
+      "label": "Show item locking visuals"
+    },
+    {
+      "key": "sortingIgnoresLockedItems",
+      "type": "checkbox",
+      "label": "Sorting preserves order of locked items"
+    }
+  ]
+}
