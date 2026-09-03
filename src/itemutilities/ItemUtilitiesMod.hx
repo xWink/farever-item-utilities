@@ -1160,9 +1160,7 @@ class ItemUtilitiesMod {
     static function toggleItemLock(item:Dynamic):Void {
         var uid = itemUid(item);
         var fingerprint = itemFingerprint(item);
-        var hero = resolveHero();
-        var characterId = heroPersistentId(hero);
-        traceCharacterIdentity(hero, characterId);
+        var characterId = heroPersistentId(resolveHero());
         if (uid == null || fingerprint == null || characterId == null)
             return;
         for (index in 0...lockRecords.length) {
@@ -1419,14 +1417,6 @@ class ItemUtilitiesMod {
             logLockError("game connection info", error);
             return null;
         }
-    }
-
-    static function traceCharacterIdentity(hero:Dynamic, characterId:String):Void {
-        var connectionInfo = gameConnectionInfo();
-        trace("[ItemUtilities][CharacterId]"
-            + " result=" + (characterId == null ? "null" : characterId)
-            + " connectionInfo=" + (connectionInfo == null ? "null" : Std.string(connectionInfo))
-            + " heroID=" + Std.string(fieldOrNull(connectionInfo, "heroID")));
     }
 
     static function resolveHero():Dynamic {
