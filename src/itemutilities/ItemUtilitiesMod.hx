@@ -323,11 +323,27 @@ class ItemUtilitiesMod {
         return lockedItemReason;
     }
 
+    @:hlx.prefix(ui.win.InventoryComp.onSort)
+    static function traceInventorySortButton(instance:Dynamic):HlxPrefixResult<Void> {
+        var inventory = fieldOrNull(instance, "inventory");
+        trace("[ItemUtilities][Sort] button inventory=" + Std.string(inventory)
+            + " sourceMatch=" + (inventory == sourceInventory)
+            + " ignoreLocks=" + sortingIgnoresLockedItems.get()
+            + " current=" + describeInventoryForSort(inventory));
+        return Continue;
+    }
+
     @:hlx.prefix(st.Inventory.requestSort)
     static function keepLockedItemsInPlaceDuringSort(instance:Dynamic, indexes:Array<Int>,
         callback:Dynamic):HlxPrefixResult<Dynamic> {
-        if (!sortingIgnoresLockedItems.get() || instance != sourceInventory || indexes == null)
+        trace("[ItemUtilities][Sort] request inventory=" + Std.string(instance)
+            + " sourceMatch=" + (instance == sourceInventory)
+            + " ignoreLocks=" + sortingIgnoresLockedItems.get()
+            + " incoming=" + describeSortIndexes(instance, indexes));
+        if (!sortingIgnoresLockedItems.get() || instance != sourceInventory || indexes == null) {
+            trace("[ItemUtilities][Sort] permutation unchanged");
             return Continue;
+        }
 
         var lockedSources:Map<Int, Bool> = new Map();
         var unlockedSorted:Array<Int> = [];
@@ -337,14 +353,19 @@ class ItemUtilitiesMod {
             else
                 unlockedSorted.push(sourceIndex);
         }
-        if (lockedSources.keys().hasNext() == false)
+        if (lockedSources.keys().hasNext() == false) {
+            trace("[ItemUtilities][Sort] no locked sources; permutation unchanged");
             return Continue;
+        }
 
         // requestSort requires a complete permutation. Preserve each locked
         // destination by mapping that slot to itself, then fill every other
         // destination with the game's already-sorted unlocked source indexes.
         for (lockedIndex in lockedSources.keys()) {
             if (lockedIndex < 0 || lockedIndex >= indexes.length) {
+                trace("[ItemUtilities][Sort] locked source " + lockedIndex
+                    + " is outside destination range 0..." + indexes.length
+                    + "; returning successful no-op");
                 if (callback != null)
                     try Reflect.callMethod(null, callback, [true]) catch (_:Dynamic) {}
                 return SkipWith(null);
@@ -360,7 +381,39 @@ class ItemUtilitiesMod {
                 unlockedIndex++;
             }
         }
+        trace("[ItemUtilities][Sort] rewritten=" + describeSortIndexes(instance, indexes));
         return Continue;
+    }
+
+    @:hlx.postfix(st.Inventory.requestSort)
+    static function traceInventorySortResult(instance:Dynamic, indexes:Array<Int>,
+        callback:Dynamic, result:Dynamic):Void {
+        trace("[ItemUtilities][Sort] request result=" + Std.string(result)
+            + " submitted=" + describeSortIndexes(instance, indexes));
+    }
+
+    static function describeSortIndexes(inventory:Dynamic, indexes:Array<Int>):String {
+        if (indexes == null)
+            return "null";
+        var parts:Array<String> = [];
+        for (index in indexes) {
+            var item = itemAt(inventory, index);
+            parts.push(index + ":" + itemUid(item)
+                + (isItemLocked(item) ? ":locked" : ":unlocked"));
+        }
+        return "[" + parts.join(", ") + "]";
+    }
+
+    static function describeInventoryForSort(inventory:Dynamic):String {
+        var parts:Array<String> = [];
+        var content = getContent(inventory);
+        for (index in 0...arrayLength(content)) {
+            var item = itemAt(inventory, index);
+            if (item != null)
+                parts.push(index + ":" + itemUid(item)
+                    + (isItemLocked(item) ? ":locked" : ":unlocked"));
+        }
+        return "[" + parts.join(", ") + "]";
     }
 
     @:hlx.postfix(ui.win.TitleWindow.onRemove)
