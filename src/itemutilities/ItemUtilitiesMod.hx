@@ -346,7 +346,9 @@ class ItemUtilitiesMod {
         if (settingsOpen.get())
             drawSettings();
 
-        if (activeBankWindow != null && enabled.get() && showDepositMaterials.get())
+        var itemTooltipActive = isHoveringItemSlot();
+        if (!itemTooltipActive && activeBankWindow != null
+            && enabled.get() && showDepositMaterials.get())
             drawBankHeaderButton();
 
         if (enabled.get()) {
@@ -355,7 +357,8 @@ class ItemUtilitiesMod {
             ensureHeroInventory();
             selectPlayerInventoryComp();
             reconcileItemLocks();
-            drawLockHeaderButton();
+            if (!itemTooltipActive)
+                drawLockHeaderButton();
             if (lockEditMode)
                 drawLockSlotOverlays();
             syncAllSlotLocks();
@@ -486,8 +489,10 @@ class ItemUtilitiesMod {
         ImGui.pushStyleVar(ImGuiStyleVar.FrameRounding, 5.0);
         ImGui.pushStyleColor(ImGuiCol.Button,
             lockEditMode ? new ImVec4(0.58, 0.43, 0.25, 1) : new ImVec4(0.40, 0.37, 0.35, 1));
-        ImGui.pushStyleColor(ImGuiCol.ButtonHovered, new ImVec4(0.48, 0.44, 0.41, 1));
-        ImGui.pushStyleColor(ImGuiCol.ButtonActive, new ImVec4(0.32, 0.29, 0.27, 1));
+        ImGui.pushStyleColor(ImGuiCol.ButtonHovered,
+            lockEditMode ? new ImVec4(0.68, 0.52, 0.31, 1) : new ImVec4(0.48, 0.44, 0.41, 1));
+        ImGui.pushStyleColor(ImGuiCol.ButtonActive,
+            lockEditMode ? new ImVec4(0.49, 0.35, 0.20, 1) : new ImVec4(0.32, 0.29, 0.27, 1));
         ImGui.pushStyleColor(ImGuiCol.Text, new ImVec4(0.92, 0.86, 0.80, 1));
 
         if (ImGui.begin("##item-utilities-lock-header", null, flags)) {
@@ -883,6 +888,31 @@ class ItemUtilitiesMod {
             }
         }
         visibleSlots.push({ inventory: inventory, index: index, slot: slot, modLocked: false });
+    }
+
+    static function isHoveringItemSlot():Bool {
+        var mouse = ImGui.getMousePos();
+        for (entry in visibleSlots) {
+            var slot:Dynamic = entry.slot;
+            if (slot == null)
+                continue;
+            var item = itemAt(entry.inventory, entry.index);
+            if (item == null)
+                item = fieldOrNull(slot, "item");
+            if (item == null)
+                continue;
+            try {
+                if (HlxRuntime.resolveField(slot, "visible") == false
+                    || fieldOrNull(slot, "parent") == null)
+                    continue;
+                var x:Float = cast HlxRuntime.resolveField(slot, "absX");
+                var y:Float = cast HlxRuntime.resolveField(slot, "absY");
+                if (mouse.x >= x && mouse.x < x + INVENTORY_SLOT_SIZE
+                    && mouse.y >= y && mouse.y < y + INVENTORY_SLOT_SIZE)
+                    return true;
+            } catch (_:Dynamic) {}
+        }
+        return false;
     }
 
     static function toggleItemLock(item:Dynamic):Void {
