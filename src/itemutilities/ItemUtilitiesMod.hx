@@ -80,6 +80,8 @@ class ItemUtilitiesMod {
     static var getInventoryWindowHeroMember:hlx.runtime.ResolvedMember;
     static var getBaseElementHeroMember:hlx.runtime.ResolvedMember;
     static var setSlotLockedMember:hlx.runtime.ResolvedMember;
+    static var gameAppType:hl.Bytes;
+    static var getGameAppFn:Dynamic;
     static var eReasonType:hl.Bytes;
     static var lockedItemReason:Dynamic;
 
@@ -1395,32 +1397,36 @@ class ItemUtilitiesMod {
     }
 
     static function heroPersistentId(hero:Dynamic):String {
-        if (hero == null)
+        var connectionInfo = gameConnectionInfo();
+        var heroId = fieldOrNull(connectionInfo, "heroID");
+        if (heroId == null)
             return null;
-        var player = fieldOrNull(hero, "player");
-        var heroData = fieldOrNull(player, "heroData");
-        if (heroData == null)
-            heroData = fieldOrNull(hero, "data");
-        var databaseId = fieldOrNull(heroData, "databaseID");
-        if (databaseId == null)
-            return null;
-        var value = Std.string(databaseId);
+        var value = Std.string(heroId);
         return value.length == 0 || value == "0" ? null : "db:" + value;
     }
 
+    static function gameConnectionInfo():Dynamic {
+        try {
+            if (gameAppType == null)
+                gameAppType = HlxRuntime.resolveType("GameApp");
+            if (gameAppType != null && getGameAppFn == null)
+                getGameAppFn = HlxRuntime.resolveStaticField(gameAppType, "get");
+            var app = getGameAppFn == null
+                ? null
+                : Reflect.callMethod(null, getGameAppFn, []);
+            return fieldOrNull(app, "connectionInfo");
+        } catch (error:Dynamic) {
+            logLockError("game connection info", error);
+            return null;
+        }
+    }
+
     static function traceCharacterIdentity(hero:Dynamic, characterId:String):Void {
-        var player = fieldOrNull(hero, "player");
-        var heroData = fieldOrNull(player, "heroData");
-        var heroDataFallback = fieldOrNull(hero, "data");
-        var selectedData = heroData == null ? heroDataFallback : heroData;
+        var connectionInfo = gameConnectionInfo();
         trace("[ItemUtilities][CharacterId]"
             + " result=" + (characterId == null ? "null" : characterId)
-            + " hero=" + (hero == null ? "null" : Std.string(hero))
-            + " player=" + (player == null ? "null" : Std.string(player))
-            + " player.heroData=" + (heroData == null ? "null" : Std.string(heroData))
-            + " hero.data=" + (heroDataFallback == null ? "null" : Std.string(heroDataFallback))
-            + " databaseID=" + Std.string(fieldOrNull(selectedData, "databaseID"))
-            + " databaseKeyPresent=" + (fieldOrNull(selectedData, "databaseKey") != null));
+            + " connectionInfo=" + (connectionInfo == null ? "null" : Std.string(connectionInfo))
+            + " heroID=" + Std.string(fieldOrNull(connectionInfo, "heroID")));
     }
 
     static function resolveHero():Dynamic {
