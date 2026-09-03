@@ -385,13 +385,6 @@ class ItemUtilitiesMod {
         return Continue;
     }
 
-    @:hlx.postfix(st.Inventory.requestSort)
-    static function traceInventorySortResult(instance:Dynamic, indexes:Array<Int>,
-        callback:Dynamic, result:Dynamic):Void {
-        trace("[ItemUtilities][Sort] request result=" + Std.string(result)
-            + " submitted=" + describeSortIndexes(instance, indexes));
-    }
-
     static function describeSortIndexes(inventory:Dynamic, indexes:Array<Int>):String {
         if (indexes == null)
             return "null";
