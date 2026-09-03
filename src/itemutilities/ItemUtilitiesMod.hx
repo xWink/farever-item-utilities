@@ -134,6 +134,9 @@ class ItemUtilitiesMod {
 
     @:hlx.postfix(ui.win.InventoryUI.init)
     static function afterPlayerInventoryInit(instance:Dynamic, result:Void):Void {
+        // InventoryUI is recreated when changing characters. Do not retain the
+        // previous hero while the new character's windows are being built.
+        activeHero = null;
         activeInventoryUI = instance;
         var comp = fieldOrNull(instance, "inventoryComp");
         var inventory = fieldOrNull(comp, "inventory");
@@ -262,6 +265,7 @@ class ItemUtilitiesMod {
             activeInventoryWindow = null;
             sourceInventory = null;
             playerInventoryComp = null;
+            activeHero = null;
         }
         if (instance == activeInventoryUI) {
             activeInventoryUI = null;
@@ -839,7 +843,9 @@ class ItemUtilitiesMod {
             missing: 0,
             known: matchingUids(current, fingerprint),
             location: tracked == null ? null : tracked.location,
-            index: tracked == null ? -1 : tracked.index
+            index: tracked == null ? -1 : tracked.index,
+            characterId: tracked == null ? null : tracked.characterId,
+            restored: true
         });
         syncAllSlotLocks();
         saveConfig();
@@ -868,9 +874,12 @@ class ItemUtilitiesMod {
         var claimed:Map<String, Bool> = new Map();
         for (record in lockRecords) {
             var uid = recordString(record, "uid");
-            if (uid != null && current.exists(uid)) {
-                var exact = current.get(uid);
+            var exact = uid == null ? null : current.get(uid);
+            if (exact != null && recordAppliesToTrackedItem(record, exact)
+                && (Reflect.field(record, "restored") == true
+                    || isSavedSlot(record, exact))) {
                 record.missing = 0;
+                record.restored = true;
                 if (updateRecordLocation(record, exact)) changed = true;
                 claimed.set(uid, true);
             }
@@ -879,7 +888,8 @@ class ItemUtilitiesMod {
         var kept:Array<Dynamic> = [];
         for (record in lockRecords) {
             var uid = recordString(record, "uid");
-            if (uid != null && current.exists(uid)) {
+            var exact = uid == null ? null : current.get(uid);
+            if (exact != null && claimed.exists(uid)) {
                 kept.push(record);
                 continue;
             }
@@ -890,6 +900,8 @@ class ItemUtilitiesMod {
             for (candidateUid in current.keys()) {
                 var candidate = current.get(candidateUid);
                 if (candidate.fingerprint != fingerprint || claimed.exists(candidateUid))
+                    continue;
+                if (!recordAppliesToTrackedItem(record, candidate))
                     continue;
                 // Existing identical items were captured when this lock last
                 // had a confirmed identity and can never steal the lock.
@@ -909,13 +921,19 @@ class ItemUtilitiesMod {
                     }
                 }
             }
-            if (replacement == null && candidates.length == 1)
+            // During the live session a transfer can legitimately change both
+            // container and slot. A record loaded from disk has not established
+            // its new runtime identity yet, so never let a lone identical item
+            // in another container steal it before the saved container loads.
+            if (replacement == null && Reflect.field(record, "restored") == true
+                && candidates.length == 1)
                 replacement = candidates[0];
 
             if (replacement != null) {
                 record.uid = replacement.uid;
                 record.missing = 0;
                 record.known = matchingUids(current, fingerprint);
+                record.restored = true;
                 updateRecordLocation(record, replacement);
                 claimed.set(replacement.uid, true);
                 kept.push(record);
@@ -938,9 +956,29 @@ class ItemUtilitiesMod {
             return false;
         var oldLocation = recordString(record, "location");
         var oldIndex = recordInt(record, "index", -1);
+        var oldCharacterId = recordString(record, "characterId");
         record.location = tracked.location;
         record.index = tracked.index;
-        return oldLocation != tracked.location || oldIndex != tracked.index;
+        record.characterId = tracked.characterId;
+        return oldLocation != tracked.location || oldIndex != tracked.index
+            || oldCharacterId != tracked.characterId;
+    }
+
+    static function isSavedSlot(record:Dynamic, tracked:Dynamic):Bool {
+        return recordString(record, "location") == tracked.location
+            && recordInt(record, "index", -1) == tracked.index;
+    }
+
+    static function recordAppliesToTrackedItem(record:Dynamic, tracked:Dynamic):Bool {
+        if (record == null || tracked == null)
+            return false;
+        // The bank is shared, while inventory and equipment belong to a hero.
+        // Legacy records without a characterId are adopted only from their
+        // exact saved slot and gain the current ID on the next save.
+        if (tracked.location == "bank")
+            return recordString(record, "location") == "bank";
+        var savedCharacterId = recordString(record, "characterId");
+        return savedCharacterId == null || savedCharacterId == tracked.characterId;
     }
 
     static function matchingUids(items:Map<String, Dynamic>, fingerprint:String):Array<String> {
@@ -964,15 +1002,16 @@ class ItemUtilitiesMod {
 
     static function collectTrackedItems(result:Map<String, Dynamic>):Void {
         var inventories:Array<Dynamic> = [];
-        addTrackedInventory(inventories, sourceInventory, "inventory");
-        addTrackedInventory(inventories, bankInventory, "bank");
-
         var hero = resolveHero();
+        var characterId = heroPersistentId(hero);
+        addTrackedInventory(inventories, sourceInventory, "inventory", characterId);
+        addTrackedInventory(inventories, bankInventory, "bank", null);
+
         var loadout = fieldOrNull(hero, "loadout");
         if (loadout != null) {
-            addTrackedInventory(inventories, fieldOrNull(loadout, "inventory"), "inventory");
-            addTrackedInventory(inventories, fieldOrNull(loadout, "equipment"), "equipment");
-            addTrackedInventory(inventories, fieldOrNull(loadout, "bank"), "bank");
+            addTrackedInventory(inventories, fieldOrNull(loadout, "inventory"), "inventory", characterId);
+            addTrackedInventory(inventories, fieldOrNull(loadout, "equipment"), "equipment", characterId);
+            addTrackedInventory(inventories, fieldOrNull(loadout, "bank"), "bank", null);
         }
 
         for (entry in inventories) {
@@ -984,18 +1023,39 @@ class ItemUtilitiesMod {
                 var fingerprint = itemFingerprint(item);
                 if (uid != null && fingerprint != null)
                     result.set(uid, { uid: uid, fingerprint: fingerprint, inventory: inventory,
-                        location: entry.location, index: index });
+                        location: entry.location, index: index,
+                        characterId: entry.characterId });
             }
         }
     }
 
     static function addTrackedInventory(inventories:Array<Dynamic>, inventory:Dynamic,
-        location:String):Void {
+        location:String, characterId:String):Void {
         if (inventory == null)
             return;
-        for (entry in inventories)
-            if (entry.inventory == inventory) return;
-        inventories.push({ inventory: inventory, location: location });
+        for (entry in inventories) {
+            if (entry.inventory == inventory) {
+                if (entry.characterId == null && characterId != null)
+                    entry.characterId = characterId;
+                return;
+            }
+        }
+        inventories.push({ inventory: inventory, location: location, characterId: characterId });
+    }
+
+    static function heroPersistentId(hero:Dynamic):String {
+        if (hero == null)
+            return null;
+        // Farever builds have used different generated names for this value.
+        // Prefer explicit persistent IDs; __uid is the final compatibility
+        // fallback and is still safer than allowing cross-character restores.
+        var names = ["characterId", "characterID", "heroId", "heroID", "id", "uid", "__uid"];
+        for (name in names) {
+            var value = fieldOrNull(hero, name);
+            if (value != null)
+                return name + ":" + Std.string(value);
+        }
+        return null;
     }
 
     static function resolveHero():Dynamic {
@@ -1374,7 +1434,9 @@ class ItemUtilitiesMod {
                                 missing: 0,
                                 known: [],
                                 location: recordString(record, "location"),
-                                index: recordInt(record, "index", -1)
+                                index: recordInt(record, "index", -1),
+                                characterId: recordString(record, "characterId"),
+                                restored: false
                             });
                         }
                     }
@@ -1390,7 +1452,8 @@ class ItemUtilitiesMod {
                 uid: recordString(record, "uid"),
                 fingerprint: recordString(record, "fingerprint"),
                 location: recordString(record, "location"),
-                index: recordInt(record, "index", -1)
+                index: recordInt(record, "index", -1),
+                characterId: recordString(record, "characterId")
             });
         }
         try File.saveContent(CONFIG_PATH, Json.stringify({
