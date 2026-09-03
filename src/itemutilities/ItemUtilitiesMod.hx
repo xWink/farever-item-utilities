@@ -608,10 +608,16 @@ class ItemUtilitiesMod {
             y = cast HlxRuntime.resolveField(appearanceButton, "absY");
             var rawWidth = fieldOrNull(appearanceButton, "calculatedWidth");
             var rawHeight = fieldOrNull(appearanceButton, "calculatedHeight");
-            if (rawWidth != null && cast rawWidth > 0)
-                width = cast rawWidth;
-            if (rawHeight != null && cast rawHeight > 0)
-                height = cast rawHeight;
+            if (rawWidth != null) {
+                var measuredWidth:Float = cast rawWidth;
+                if (measuredWidth > 0)
+                    width = measuredWidth;
+            }
+            if (rawHeight != null) {
+                var measuredHeight:Float = cast rawHeight;
+                if (measuredHeight > 0)
+                    height = measuredHeight;
+            }
         } catch (_:Dynamic) return;
 
         ImGui.setNextWindowPos(new ImVec2(x + width + 10, y));
