@@ -53,6 +53,7 @@ class ItemUtilitiesMod {
     static var propertiesType:hl.Bytes;
     static var uiElementType:hl.Bytes;
     static var h2dObjectType:hl.Bytes;
+    static var getBoundsMember:hlx.runtime.ResolvedMember;
     static var isTypeMember:hlx.runtime.ResolvedMember;
     static var equalsMember:hlx.runtime.ResolvedMember;
     static var isMaxStackMember:hlx.runtime.ResolvedMember;
@@ -93,6 +94,7 @@ class ItemUtilitiesMod {
     static var lockScanInitialized:Bool = false;
     static var activeHero:Dynamic;
     static var lockErrors:Map<String, Bool> = new Map();
+    static var activeTooltip:Dynamic;
     static inline var LOCK_MISSING_FRAME_LIMIT = 120;
     static inline var INVENTORY_SLOT_SIZE = 48.0;
 
@@ -176,6 +178,13 @@ class ItemUtilitiesMod {
     static function afterInventorySlotChanged(instance:Dynamic, force:hl.Ref<Bool>, result:Bool):Void {
         registerSlot(instance);
         syncSlotLock(instance);
+    }
+
+    @:hlx.postfix(ui.BaseUI.setTip)
+    static function afterTooltipSet(instance:Dynamic, element:Dynamic, anchor:Dynamic,
+        position:Dynamic, nesting:Dynamic, result:Dynamic):Void {
+        if (result != null)
+            activeTooltip = result;
     }
 
     @:hlx.prefix(st.Loadout.canSellItem)
@@ -346,9 +355,7 @@ class ItemUtilitiesMod {
         if (settingsOpen.get())
             drawSettings();
 
-        var itemTooltipActive = isHoveringItemSlot();
-        if (!itemTooltipActive && activeBankWindow != null
-            && enabled.get() && showDepositMaterials.get())
+        if (activeBankWindow != null && enabled.get() && showDepositMaterials.get())
             drawBankHeaderButton();
 
         if (enabled.get()) {
@@ -357,8 +364,7 @@ class ItemUtilitiesMod {
             ensureHeroInventory();
             selectPlayerInventoryComp();
             reconcileItemLocks();
-            if (!itemTooltipActive)
-                drawLockHeaderButton();
+            drawLockHeaderButton();
             if (lockEditMode)
                 drawLockSlotOverlays();
             syncAllSlotLocks();
@@ -430,6 +436,9 @@ class ItemUtilitiesMod {
             return;
         }
 
+        if (tooltipOverlaps(x - 38, y, 32, 30))
+            return;
+
         // Keep the utility in the Bank header without modifying Domkit's live
         // component tree (doing that after init can invalidate the whole UI).
         ImGui.setNextWindowPos(new ImVec2(x - 38, y));
@@ -479,6 +488,9 @@ class ItemUtilitiesMod {
             x = cast HlxRuntime.resolveField(sortButton, "absX");
             y = cast HlxRuntime.resolveField(sortButton, "absY");
         } catch (_:Dynamic) return;
+
+        if (tooltipOverlaps(x - 38, y, 32, 30))
+            return;
 
         ImGui.setNextWindowPos(new ImVec2(x - 38, y));
         ImGui.setNextWindowBgAlpha(0);
@@ -890,29 +902,34 @@ class ItemUtilitiesMod {
         visibleSlots.push({ inventory: inventory, index: index, slot: slot, modLocked: false });
     }
 
-    static function isHoveringItemSlot():Bool {
-        var mouse = ImGui.getMousePos();
-        for (entry in visibleSlots) {
-            var slot:Dynamic = entry.slot;
-            if (slot == null)
-                continue;
-            var item = itemAt(entry.inventory, entry.index);
-            if (item == null)
-                item = fieldOrNull(slot, "item");
-            if (item == null)
-                continue;
-            try {
-                if (HlxRuntime.resolveField(slot, "visible") == false
-                    || fieldOrNull(slot, "parent") == null)
-                    continue;
-                var x:Float = cast HlxRuntime.resolveField(slot, "absX");
-                var y:Float = cast HlxRuntime.resolveField(slot, "absY");
-                if (mouse.x >= x && mouse.x < x + INVENTORY_SLOT_SIZE
-                    && mouse.y >= y && mouse.y < y + INVENTORY_SLOT_SIZE)
-                    return true;
-            } catch (_:Dynamic) {}
+    static function tooltipOverlaps(x:Float, y:Float, width:Float, height:Float):Bool {
+        try {
+            var tip = activeTooltip;
+            if (tip == null || fieldOrNull(tip, "parent") == null
+                || fieldOrNull(tip, "visible") == false)
+                return false;
+
+            if (h2dObjectType == null)
+                h2dObjectType = HlxRuntime.resolveType("h2d.Object");
+            if (h2dObjectType != null && getBoundsMember == null)
+                getBoundsMember = HlxRuntime.resolveMember(h2dObjectType, "getBounds");
+            if (getBoundsMember == null)
+                return false;
+
+            // Farever's Tooltip is an h2d.Object. getBounds(null, null) returns
+            // its final screen-space rectangle after Tooltip.sync has placed it.
+            var bounds:Dynamic = HlxRuntime.callResolved(getBoundsMember, [tip, null, null]);
+            if (bounds == null)
+                return false;
+            var left:Float = cast HlxRuntime.resolveField(bounds, "xMin");
+            var top:Float = cast HlxRuntime.resolveField(bounds, "yMin");
+            var right:Float = cast HlxRuntime.resolveField(bounds, "xMax");
+            var bottom:Float = cast HlxRuntime.resolveField(bounds, "yMax");
+            return x < right && x + width > left && y < bottom && y + height > top;
+        } catch (error:Dynamic) {
+            logLockError("tooltip bounds", error);
+            return false;
         }
-        return false;
     }
 
     static function toggleItemLock(item:Dynamic):Void {
