@@ -60,6 +60,7 @@ class ItemUtilitiesMod {
     static var isMaxStackMember:hlx.runtime.ResolvedMember;
     static var getSlotStackSizeMember:hlx.runtime.ResolvedMember;
     static var getNextFreeIndexMember:hlx.runtime.ResolvedMember;
+    static var getItemStackMember:hlx.runtime.ResolvedMember;
     static var requestTransferMember:hlx.runtime.ResolvedMember;
     static var getMyHeroMember:hlx.runtime.ResolvedMember;
     static var arrayGetDynMember:hlx.runtime.ResolvedMember;
@@ -98,8 +99,6 @@ class ItemUtilitiesMod {
     static var activeTooltip:Dynamic;
     static var activeTooltipShownAt:Float = 0;
     static var activeBaseUI:Dynamic;
-    static var wrappedRecyclerActions:Array<Dynamic> = [];
-    static var lockedDragFingerprint:String;
     static inline var LOCK_MISSING_FRAME_LIMIT = 120;
     static inline var INVENTORY_SLOT_SIZE = 48.0;
     static inline var TOOLTIP_BUTTON_DELAY = 0.2;
@@ -209,49 +208,6 @@ class ItemUtilitiesMod {
         activeBaseUI = instance;
     }
 
-    @:hlx.postfix(ui.UIElement.bindAction)
-    static function afterActionBound(instance:Dynamic, action:Dynamic,
-        setCheckEnable:hl.Ref<Bool>, result:Void):Void {
-        if (action == null || fieldOrNull(action, "icon") != "Item_Complete"
-            || wrappedRecyclerActions.indexOf(action) >= 0)
-            return;
-        try {
-            // CharacterUI's recycler action closes over a UI-side equipment
-            // item. Wrap the action itself so the exact originating slot is
-            // available when deciding whether the item is locked.
-            var originalReason:Dynamic = Reflect.field(action, "reason");
-            var originalAction:Dynamic = Reflect.field(action, "action");
-            Reflect.setField(action, "reason", function():Dynamic {
-                if (isModLockedSlot(instance))
-                    return getLockedItemReason();
-                return originalReason == null
-                    ? null
-                    : Reflect.callMethod(null, originalReason, []);
-            });
-            Reflect.setField(action, "action", function():Void {
-                if (!isModLockedSlot(instance) && originalAction != null)
-                    Reflect.callMethod(null, originalAction, []);
-            });
-            wrappedRecyclerActions.push(action);
-        } catch (error:Dynamic) {
-            logLockError("recycler action guard", error);
-        }
-    }
-
-    @:hlx.postfix(ui.BaseUI.startDrag)
-    static function afterDragStarted(instance:Dynamic, element:Dynamic,
-        result:Void):Void {
-        lockedDragFingerprint = isModLockedSlot(element)
-            ? itemFingerprint(fieldOrNull(element, "item"))
-            : null;
-    }
-
-    @:hlx.postfix(ui.BaseUI.endDrag)
-    static function afterDragEnded(instance:Dynamic, element:Dynamic,
-        result:Void):Void {
-        lockedDragFingerprint = null;
-    }
-
     @:hlx.prefix(st.Loadout.canSellItem)
     static function preventLockedSale(instance:Dynamic, item:Dynamic):HlxPrefixResult<Bool> {
         return isItemLocked(item) ? SkipWith(false) : Continue;
@@ -269,7 +225,7 @@ class ItemUtilitiesMod {
 
     @:hlx.prefix(st.Loadout.canCompleteItem)
     static function preventLockedRecycle(instance:Dynamic, item:Dynamic):HlxPrefixResult<Bool> {
-        return isItemLocked(item) ? SkipWith(false) : Continue;
+        return isRecyclerItemLocked(instance, item) ? SkipWith(false) : Continue;
     }
 
     // CharacterUI uses checkCompleteItem to decide whether an item can be
@@ -277,13 +233,26 @@ class ItemUtilitiesMod {
     @:hlx.prefix(st.Loadout.checkCompleteItem)
     static function preventLockedRecyclerSelection(instance:Dynamic,
         item:Dynamic):HlxPrefixResult<Dynamic> {
-        return isItemLocked(item) ? SkipWith(getLockedItemReason()) : Continue;
+        return isRecyclerItemLocked(instance, item)
+            ? SkipWith(getLockedItemReason())
+            : Continue;
+    }
+
+    // This is the authoritative recycler implementation. It resolves the
+    // submitted UI item through Inventory.getItemStack before constructing the
+    // completion transaction, so guarding it covers both drag and right click.
+    @:hlx.prefix(st.Loadout.implCompleteItem)
+    static function preventLockedRecyclerImplementation(instance:Dynamic,
+        item:Dynamic):HlxPrefixResult<Dynamic> {
+        return isRecyclerItemLocked(instance, item)
+            ? SkipWith(getLockedItemReason())
+            : Continue;
     }
 
     @:hlx.prefix(st.Loadout.completeItem)
     static function preventLockedRecycleRequest(instance:Dynamic, item:Dynamic,
         callback:Dynamic):HlxPrefixResult<Dynamic> {
-        if (!isItemLocked(item))
+        if (!isRecyclerItemLocked(instance, item))
             return Continue;
         rejectActionCallback(callback);
         return SkipWith(null);
@@ -293,7 +262,7 @@ class ItemUtilitiesMod {
     @:hlx.prefix(st.Loadout.requestCompleteItem)
     static function preventLockedRecyclerRequest(instance:Dynamic,
         item:Dynamic):HlxPrefixControl {
-        return isItemLocked(item) ? Skip : Continue;
+        return isRecyclerItemLocked(instance, item) ? Skip : Continue;
     }
 
     @:hlx.prefix(st.Inventory.canRequestDropIndex)
@@ -1272,23 +1241,28 @@ class ItemUtilitiesMod {
             if (hasLockUid(itemUid(authoritative)))
                 return true;
         }
-        if (lockedDragFingerprint != null
-            && itemFingerprint(item) == lockedDragFingerprint)
-            return true;
         return false;
     }
 
-    static function isModLockedSlot(slot:Dynamic):Bool {
-        if (slot == null)
+    static function isRecyclerItemLocked(loadout:Dynamic, item:Dynamic):Bool {
+        if (isItemLocked(item))
+            return true;
+        try {
+            var inventory = fieldOrNull(loadout, "inventory");
+            if (inventory == null)
+                return false;
+            if (inventoryType == null)
+                inventoryType = HlxRuntime.resolveType("st.Inventory");
+            if (inventoryType != null && getItemStackMember == null)
+                getItemStackMember = HlxRuntime.resolveMember(inventoryType, "getItemStack");
+            if (getItemStackMember == null)
+                return false;
+            var stack = HlxRuntime.callResolved(getItemStackMember, [inventory, item]);
+            return stack != null && isItemLocked(fieldOrNull(stack, "item"));
+        } catch (error:Dynamic) {
+            logLockError("recycler item resolution", error);
             return false;
-        for (entry in visibleSlots) {
-            if (entry != null && entry.slot == slot) {
-                if (entry.modLocked == true)
-                    return true;
-                return hasLockUid(itemUid(itemAt(entry.inventory, entry.index)));
-            }
         }
-        return hasLockUid(itemUid(fieldOrNull(slot, "item")));
     }
 
     static function hasLockUid(uid:String):Bool {
