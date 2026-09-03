@@ -80,8 +80,6 @@ class ItemUtilitiesMod {
     static var getInventoryWindowHeroMember:hlx.runtime.ResolvedMember;
     static var getBaseElementHeroMember:hlx.runtime.ResolvedMember;
     static var setSlotLockedMember:hlx.runtime.ResolvedMember;
-    static var dbStateType:hl.Bytes;
-    static var getDatabaseIdMember:hlx.runtime.ResolvedMember;
     static var eReasonType:hl.Bytes;
     static var lockedItemReason:Dynamic;
 
@@ -1160,7 +1158,9 @@ class ItemUtilitiesMod {
     static function toggleItemLock(item:Dynamic):Void {
         var uid = itemUid(item);
         var fingerprint = itemFingerprint(item);
-        var characterId = heroPersistentId(resolveHero());
+        var hero = resolveHero();
+        var characterId = heroPersistentId(hero);
+        traceCharacterIdentity(hero, characterId);
         if (uid == null || fingerprint == null || characterId == null)
             return;
         for (index in 0...lockRecords.length) {
@@ -1400,23 +1400,27 @@ class ItemUtilitiesMod {
         var player = fieldOrNull(hero, "player");
         var heroData = fieldOrNull(player, "heroData");
         if (heroData == null)
+            heroData = fieldOrNull(hero, "data");
+        var databaseId = fieldOrNull(heroData, "databaseID");
+        if (databaseId == null)
             return null;
-        try {
-            if (dbStateType == null)
-                dbStateType = HlxRuntime.resolveType("st.DBState");
-            if (dbStateType != null && getDatabaseIdMember == null)
-                getDatabaseIdMember = HlxRuntime.resolveMember(dbStateType, "get_databaseID");
-            if (getDatabaseIdMember == null)
-                return null;
-            var databaseId = HlxRuntime.callResolved(getDatabaseIdMember, [heroData]);
-            if (databaseId == null)
-                return null;
-            var value = Std.string(databaseId);
-            return value.length == 0 || value == "0" ? null : "db:" + value;
-        } catch (error:Dynamic) {
-            logLockError("character database ID", error);
-            return null;
-        }
+        var value = Std.string(databaseId);
+        return value.length == 0 || value == "0" ? null : "db:" + value;
+    }
+
+    static function traceCharacterIdentity(hero:Dynamic, characterId:String):Void {
+        var player = fieldOrNull(hero, "player");
+        var heroData = fieldOrNull(player, "heroData");
+        var heroDataFallback = fieldOrNull(hero, "data");
+        var selectedData = heroData == null ? heroDataFallback : heroData;
+        trace("[ItemUtilities][CharacterId]"
+            + " result=" + (characterId == null ? "null" : characterId)
+            + " hero=" + (hero == null ? "null" : Std.string(hero))
+            + " player=" + (player == null ? "null" : Std.string(player))
+            + " player.heroData=" + (heroData == null ? "null" : Std.string(heroData))
+            + " hero.data=" + (heroDataFallback == null ? "null" : Std.string(heroDataFallback))
+            + " databaseID=" + Std.string(fieldOrNull(selectedData, "databaseID"))
+            + " databaseKeyPresent=" + (fieldOrNull(selectedData, "databaseKey") != null));
     }
 
     static function resolveHero():Dynamic {
