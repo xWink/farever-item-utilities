@@ -206,10 +206,12 @@ class ItemUtilitiesMod {
     @:hlx.postfix(ui.UIElement.bindAction)
     static function afterUiActionBound(instance:Dynamic, action:Dynamic,
         setCheckEnable:hl.Ref<Bool>, result:Void):Void {
-        if (Std.string(fieldOrNull(action, "icon")) != "Item_Complete")
+        var item = fieldOrNull(instance, "item");
+        if (!isItemLocked(item)
+            || Std.string(fieldOrNull(action, "input")) != "RightClick")
             return;
-        recyclerTrace("bindAction.Item_Complete", fieldOrNull(instance, "item"), instance,
-            "input=" + safeString(fieldOrNull(action, "input"))
+        recyclerTrace("bindAction.lockedRightClick", item, instance,
+            "icon=" + safeString(fieldOrNull(action, "icon"))
             + " setCheckEnable=" + safeString(setCheckEnable));
     }
 
@@ -221,10 +223,20 @@ class ItemUtilitiesMod {
             recyclerTrace("drag.start", item, element);
     }
 
-    @:hlx.postfix(ui.BaseUI.endDrag)
-    static function afterRecyclerDragEnded(instance:Dynamic, result:Void):Void {
-        recyclerTrace("drag.end", null, null);
+    @:hlx.prefix(ui.win.InventorySlot.canBeDraggedTo)
+    static function traceLockedDragTarget(instance:Dynamic,
+        target:Dynamic):HlxPrefixResult<Bool> {
+        var item = fieldOrNull(instance, "item");
+        if (isItemLocked(item))
+            recyclerTrace("drag.canBeDraggedTo", item, instance,
+                "target=" + safeString(target)
+                + " targetItem=" + safeString(fieldOrNull(target, "item"))
+                + " targetInventory=" + safeString(fieldOrNull(target, "inventory")));
+        return Continue;
     }
+
+    @:hlx.postfix(ui.BaseUI.endDrag)
+    static function afterRecyclerDragEnded(instance:Dynamic, result:Void):Void {}
 
     @:hlx.postfix(ui.BaseUI.setTip)
     static function afterTooltipSet(instance:Dynamic, element:Dynamic, anchor:Dynamic,
@@ -343,6 +355,12 @@ class ItemUtilitiesMod {
         destination:Dynamic, destinationIndex:Int, force:hl.Ref<Bool>,
         count:Null<Int>):HlxPrefixResult<Bool> {
         var item = itemAt(instance, index);
+        if (isItemLocked(item))
+            recyclerTrace("Inventory.canRequestTransfer", item, null,
+                "source=" + safeString(instance)
+                + " sourceIndex=" + index
+                + " destination=" + safeString(destination)
+                + " destinationIndex=" + destinationIndex);
         return isItemLocked(item) && isBankInventory(destination)
             ? SkipWith(false)
             : Continue;
@@ -354,6 +372,12 @@ class ItemUtilitiesMod {
         destination:Dynamic, destinationIndex:Int, force:hl.Ref<Bool>,
         count:Null<Int>, callback:Dynamic):HlxPrefixResult<Dynamic> {
         var item = itemAt(instance, index);
+        if (isItemLocked(item))
+            recyclerTrace("Inventory.requestTransfer", item, null,
+                "source=" + safeString(instance)
+                + " sourceIndex=" + index
+                + " destination=" + safeString(destination)
+                + " destinationIndex=" + destinationIndex);
         if (!isItemLocked(item) || !isBankInventory(destination))
             return Continue;
         rejectActionCallback(callback);
@@ -365,6 +389,11 @@ class ItemUtilitiesMod {
     static function preventLockedBankRightClickCheck(instance:Dynamic,
         source:Dynamic, sourceIndex:Int, destination:Dynamic):HlxPrefixResult<Dynamic> {
         var item = itemAt(source, sourceIndex);
+        if (isItemLocked(item))
+            recyclerTrace("Loadout.checkRequestTransfer", item, null,
+                "source=" + safeString(source)
+                + " sourceIndex=" + sourceIndex
+                + " destination=" + safeString(destination));
         return isItemLocked(item) && isBankInventory(destination)
             ? SkipWith(getLockedItemReason())
             : Continue;
@@ -375,6 +404,11 @@ class ItemUtilitiesMod {
         source:Dynamic, sourceIndex:Int, destination:Dynamic,
         callback:Dynamic):HlxPrefixResult<Dynamic> {
         var item = itemAt(source, sourceIndex);
+        if (isItemLocked(item))
+            recyclerTrace("Loadout.requestTransfer", item, null,
+                "source=" + safeString(source)
+                + " sourceIndex=" + sourceIndex
+                + " destination=" + safeString(destination));
         if (!isItemLocked(item) || !isBankInventory(destination))
             return Continue;
         rejectActionCallback(callback);
@@ -1633,11 +1667,8 @@ class ItemUtilitiesMod {
     static function syncRecyclerUiUid(slot:Dynamic, locked:Bool):Void {
         var item = fieldOrNull(slot, "item");
         var uid = itemUid(item);
-        if (uid == null) {
-            recyclerTrace("syncRecyclerUiUid.noUid", item, slot,
-                "desiredLocked=" + locked);
+        if (uid == null)
             return;
-        }
         var previous = recyclerLockedUiUids.exists(uid);
         if (locked)
             recyclerLockedUiUids.set(uid, true);
