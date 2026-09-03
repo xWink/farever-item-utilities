@@ -20,9 +20,10 @@ class ItemUtilitiesMod {
 
     static var enabled = new BoolRef(true);
     static var showDepositMaterials = new BoolRef(true);
-    static var itemLockingEnabled = new BoolRef(true);
+    static var showLockVisuals = new BoolRef(true);
     static var settingsOpen = new BoolRef(true);
     static var hasSeenMenu:Bool = false;
+    static var confirmDeleteLocks:Bool = false;
 
     static var hotkeyKey:Int = ImGuiKey.F9;
     static var hotkeyCtrl:Bool = false;
@@ -368,8 +369,8 @@ class ItemUtilitiesMod {
                 lockEditMode = false;
             ensureHeroInventory();
             selectPlayerInventoryComp();
-            if (itemLockingEnabled.get()) {
-                reconcileItemLocks();
+            reconcileItemLocks();
+            if (showLockVisuals.get()) {
                 drawLockHeaderButton();
                 if (lockEditMode)
                     drawLockSlotOverlays();
@@ -411,18 +412,36 @@ class ItemUtilitiesMod {
             saveConfig();
         }
 
-        var oldItemLocking = itemLockingEnabled.get();
-        ImGui.checkbox("Enable item locking", itemLockingEnabled);
+        var oldLockVisuals = showLockVisuals.get();
+        ImGui.checkbox("Show item locking visuals", showLockVisuals);
         if (ImGui.isItemHovered())
-            ImGui.setTooltip("Disabling item locking removes all saved locks.");
-        if (itemLockingEnabled.get() != oldItemLocking) {
-            if (!itemLockingEnabled.get()) {
+            ImGui.setTooltip("Shows the lock button and lock badges. Hidden locks remain active.");
+        if (showLockVisuals.get() != oldLockVisuals) {
+            if (!showLockVisuals.get()) {
+                lockEditMode = false;
+                clearSlotLocks();
+            }
+            saveConfig();
+        }
+
+        if (!confirmDeleteLocks) {
+            if (ImGui.button("Delete all saved locks"))
+                confirmDeleteLocks = true;
+            if (ImGui.isItemHovered())
+                ImGui.setTooltip("Permanently removes every saved item lock.");
+        } else {
+            ImGui.text("Delete every saved item lock?");
+            if (ImGui.button("Yes, delete all locks")) {
                 lockEditMode = false;
                 clearSlotLocks();
                 lockRecords = [];
                 lockScanInitialized = false;
+                confirmDeleteLocks = false;
+                saveConfig();
             }
-            saveConfig();
+            ImGui.sameLine();
+            if (ImGui.button("Cancel"))
+                confirmDeleteLocks = false;
         }
 
         ImGui.separator();
@@ -1209,7 +1228,7 @@ class ItemUtilitiesMod {
     }
 
     static function isItemLocked(item:Dynamic):Bool {
-        if (!enabled.get() || !itemLockingEnabled.get() || item == null)
+        if (!enabled.get() || item == null)
             return false;
         return hasLockUid(itemUid(item));
     }
@@ -1513,6 +1532,12 @@ class ItemUtilitiesMod {
     static function syncSlotLockEntry(entry:Dynamic):Void {
         var slot = entry == null ? null : entry.slot;
         if (slot == null) return;
+        if (!showLockVisuals.get()) {
+            if (entry.modLocked == true && fieldOrNull(slot, "locked") == true)
+                setSlotLocked(slot, false);
+            entry.modLocked = false;
+            return;
+        }
         try {
             // Player inventory slots expose item directly, but bank slots do
             // not reliably populate that UI field. The inventory content is
@@ -1817,8 +1842,8 @@ class ItemUtilitiesMod {
             var data:Dynamic = Json.parse(File.getContent(CONFIG_PATH));
             if (Reflect.hasField(data, "enabled")) enabled.set(Reflect.field(data, "enabled"));
             if (Reflect.hasField(data, "showDepositMaterials")) showDepositMaterials.set(Reflect.field(data, "showDepositMaterials"));
-            if (Reflect.hasField(data, "itemLockingEnabled"))
-                itemLockingEnabled.set(Reflect.field(data, "itemLockingEnabled"));
+            if (Reflect.hasField(data, "showLockVisuals"))
+                showLockVisuals.set(Reflect.field(data, "showLockVisuals"));
             if (Reflect.hasField(data, "hotkeyKey")) hotkeyKey = cast Reflect.field(data, "hotkeyKey");
             if (Reflect.hasField(data, "hotkeyCtrl")) hotkeyCtrl = Reflect.field(data, "hotkeyCtrl");
             if (Reflect.hasField(data, "hotkeyShift")) hotkeyShift = Reflect.field(data, "hotkeyShift");
@@ -1868,7 +1893,7 @@ class ItemUtilitiesMod {
         try File.saveContent(CONFIG_PATH, Json.stringify({
             enabled: enabled.get(),
             showDepositMaterials: showDepositMaterials.get(),
-            itemLockingEnabled: itemLockingEnabled.get(),
+            showLockVisuals: showLockVisuals.get(),
             hotkeyKey: hotkeyKey,
             hotkeyCtrl: hotkeyCtrl,
             hotkeyShift: hotkeyShift,
