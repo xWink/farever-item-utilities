@@ -117,8 +117,7 @@ class ItemUtilitiesMod {
 
     static function main():Void {
         loadConfig();
-        if (!FileSystem.exists(CONFIG_PATH))
-            saveConfig();
+        saveConfig();
         updateConfigModifiedTime();
         ImGui.register(HlxRuntime.moduleName(), draw);
     }
