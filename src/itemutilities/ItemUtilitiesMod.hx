@@ -978,7 +978,13 @@ class ItemUtilitiesMod {
         if (tracked.location == "bank")
             return recordString(record, "location") == "bank";
         var savedCharacterId = recordString(record, "characterId");
-        return savedCharacterId == null || savedCharacterId == tracked.characterId;
+        // Records produced by the previous build used a runtime object ID,
+        // which changes after reconnecting. Treat those as legacy so they can
+        // be adopted once from their exact saved slot and rewritten with the
+        // stable character key below.
+        if (savedCharacterId == null || !StringTools.startsWith(savedCharacterId, "name:"))
+            return true;
+        return tracked.characterId != null && savedCharacterId == tracked.characterId;
     }
 
     static function matchingUids(items:Map<String, Dynamic>, fingerprint:String):Array<String> {
@@ -1046,15 +1052,17 @@ class ItemUtilitiesMod {
     static function heroPersistentId(hero:Dynamic):String {
         if (hero == null)
             return null;
-        // Farever builds have used different generated names for this value.
-        // Prefer explicit persistent IDs; __uid is the final compatibility
-        // fallback and is still safer than allowing cross-character restores.
-        var names = ["characterId", "characterID", "heroId", "heroID", "id", "uid", "__uid"];
-        for (name in names) {
-            var value = fieldOrNull(hero, name);
-            if (value != null)
-                return name + ":" + Std.string(value);
+        // hxbit's __uid (and the generated Hero.id observed in Farever) is a
+        // runtime object identity, not a persistent character identity. The
+        // character name is stable across sessions and unique for the account,
+        // so use it as the persisted character key.
+        var value = fieldOrNull(hero, "name");
+        if (value == null) {
+            var data = fieldOrNull(hero, "data");
+            value = fieldOrNull(data, "name");
         }
+        if (value != null && Std.string(value).length > 0)
+            return "name:" + Std.string(value);
         return null;
     }
 
