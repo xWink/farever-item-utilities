@@ -1202,6 +1202,30 @@ class ItemUtilitiesMod {
         var uid = itemUid(item);
         if (uid == null)
             return false;
+        if (hasLockUid(uid))
+            return true;
+
+        // Equipment slots can expose a UI-side item object whose UID differs
+        // from the authoritative item stored in st.Equipment. Right-click
+        // actions capture that displayed object, so resolve it through the
+        // exact visible slot before checking the underlying lock record.
+        for (entry in visibleSlots) {
+            var slot = entry == null ? null : entry.slot;
+            if (slot == null || fieldOrNull(slot, "parent") == null)
+                continue;
+            var displayed = fieldOrNull(slot, "item");
+            if (itemUid(displayed) != uid)
+                continue;
+            var authoritative = itemAt(entry.inventory, entry.index);
+            if (hasLockUid(itemUid(authoritative)))
+                return true;
+        }
+        return false;
+    }
+
+    static function hasLockUid(uid:String):Bool {
+        if (uid == null)
+            return false;
         for (record in lockRecords)
             if (recordString(record, "uid") == uid)
                 return true;
