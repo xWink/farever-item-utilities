@@ -22,6 +22,21 @@
       "key": "sortingIgnoresLockedItems",
       "type": "checkbox",
       "label": "Sorting preserves order of locked items"
+    },
+    {
+      "key": "preset1Hotkey",
+      "type": "keybinding",
+      "label": "Preset 1 hotkey"
+    },
+    {
+      "key": "preset2Hotkey",
+      "type": "keybinding",
+      "label": "Preset 2 hotkey"
+    },
+    {
+      "key": "preset3Hotkey",
+      "type": "keybinding",
+      "label": "Preset 3 hotkey"
     }
   ]
 }
