@@ -39,6 +39,7 @@ class ItemUtilitiesMod {
     static var sourceInventory:Dynamic;
     static var bankInventory:Dynamic;
     static var depositing:Bool = false;
+    static var depositAllMode:Bool = false;
     static var transferIndexes:Array<Int> = [];
     static var transferPosition:Int = 0;
     static var status:String = "";
@@ -449,12 +450,18 @@ class ItemUtilitiesMod {
             return;
         }
 
-        if (buttonCovered(x - 38, y, 32, 30))
+        drawBankDepositButton(sortButton, x - 76, y, true);
+        drawBankDepositButton(sortButton, x - 38, y, false);
+    }
+
+    static function drawBankDepositButton(sortButton:Dynamic, x:Float, y:Float,
+        allItems:Bool):Void {
+        if (buttonCovered(x, y, 32, 30))
             return;
 
         // Keep the utility in the Bank header without modifying Domkit's live
         // component tree (doing that after init can invalidate the whole UI).
-        ImGui.setNextWindowPos(new ImVec2(x - 38, y));
+        ImGui.setNextWindowPos(new ImVec2(x, y));
         ImGui.setNextWindowBgAlpha(0);
         var flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
             | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings
@@ -465,21 +472,30 @@ class ItemUtilitiesMod {
         ImGui.pushStyleColor(ImGuiCol.ButtonHovered, new ImVec4(0.48, 0.44, 0.41, 1));
         ImGui.pushStyleColor(ImGuiCol.ButtonActive, new ImVec4(0.32, 0.29, 0.27, 1));
         ImGui.pushStyleColor(ImGuiCol.Text, new ImVec4(0.92, 0.86, 0.80, 1));
-        if (!ImGui.begin("##item-utilities-bank-header", null, flags)) {
+        var suffix = allItems ? "all" : "materials";
+        if (!ImGui.begin("##item-utilities-bank-header-" + suffix, null, flags)) {
             ImGui.end();
             ImGui.popStyleColor(4);
             ImGui.popStyleVar(2);
             return;
         }
 
-        if (ImGui.button("##deposit-materials", new ImVec2(32, 30))) {
+        if (ImGui.button("##deposit-" + suffix, new ImVec2(32, 30))) {
             playButtonClickSound(sortButton);
-            if (!depositing) beginDeposit();
+            if (!depositing) {
+                if (allItems)
+                    beginDepositAll();
+                else
+                    beginDeposit();
+            }
         }
-        drawDepositIcon();
+        if (allItems)
+            drawDepositAllIcon();
+        else
+            drawCraftingDepositIcon();
         if (ImGui.isItemHovered()) {
             setGameButtonCursor();
-            ImGui.setTooltip(" Deposit crafting components ");
+            ImGui.setTooltip(allItems ? " Deposit all " : " Deposit crafting components ");
         }
 
         ImGui.end();
@@ -595,23 +611,51 @@ class ItemUtilitiesMod {
         }
     }
 
-    static function drawDepositIcon():Void {
+    static function drawCraftingDepositIcon():Void {
         var min = ImGui.getItemRectMin();
         var drawList = ImGui.getWindowDrawList();
-        var crystal = ImGui.colorConvertFloat4ToU32(new ImVec4(0.91, 0.70, 0.39, 1));
-        var crystalShade = ImGui.colorConvertFloat4ToU32(new ImVec4(0.72, 0.48, 0.25, 1));
+        var metal = ImGui.colorConvertFloat4ToU32(new ImVec4(0.91, 0.70, 0.39, 1));
+        var handle = ImGui.colorConvertFloat4ToU32(new ImVec4(0.63, 0.42, 0.24, 1));
         var mark = ImGui.colorConvertFloat4ToU32(new ImVec4(0.94, 0.89, 0.83, 1));
 
-        // A small crafting crystal.
+        // Hammer head and handle represent crafting components.
         ImGui.ImDrawList_AddQuadFilled(drawList,
-            new ImVec2(min.x + 6, min.y + 10),
+            new ImVec2(min.x + 7, min.y + 6),
+            new ImVec2(min.x + 17, min.y + 9),
+            new ImVec2(min.x + 15, min.y + 13),
+            new ImVec2(min.x + 5, min.y + 10), metal);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 12, min.y + 11),
+            new ImVec2(min.x + 8, min.y + 19), handle, 3.0);
+
+        drawDepositArrowAndBucket(min, drawList, mark);
+    }
+
+    static function drawDepositAllIcon():Void {
+        var min = ImGui.getItemRectMin();
+        var drawList = ImGui.getWindowDrawList();
+        var star = ImGui.colorConvertFloat4ToU32(new ImVec4(0.91, 0.70, 0.39, 1));
+        var mark = ImGui.colorConvertFloat4ToU32(new ImVec4(0.94, 0.89, 0.83, 1));
+
+        // Four-point sparkle communicates "all" without crowding the icon.
+        ImGui.ImDrawList_AddLine(drawList,
             new ImVec2(min.x + 11, min.y + 5),
-            new ImVec2(min.x + 16, min.y + 10),
-            new ImVec2(min.x + 11, min.y + 17), crystal);
-        ImGui.ImDrawList_AddTriangleFilled(drawList,
-            new ImVec2(min.x + 6, min.y + 10),
-            new ImVec2(min.x + 11, min.y + 17),
-            new ImVec2(min.x + 11, min.y + 10), crystalShade);
+            new ImVec2(min.x + 11, min.y + 18), star, 2.5);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 5, min.y + 11),
+            new ImVec2(min.x + 17, min.y + 11), star, 2.5);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 7, min.y + 7),
+            new ImVec2(min.x + 15, min.y + 15), star, 1.5);
+        ImGui.ImDrawList_AddLine(drawList,
+            new ImVec2(min.x + 15, min.y + 7),
+            new ImVec2(min.x + 7, min.y + 15), star, 1.5);
+
+        drawDepositArrowAndBucket(min, drawList, mark);
+    }
+
+    static function drawDepositArrowAndBucket(min:ImVec2, drawList:Dynamic,
+        mark:Int):Void {
 
         // Down arrow and receiving tray communicate "deposit" at a glance.
         ImGui.ImDrawList_AddLine(drawList,
@@ -657,11 +701,20 @@ class ItemUtilitiesMod {
     }
 
     static function beginDeposit():Void {
+        beginDepositMode(false);
+    }
+
+    static function beginDepositAll():Void {
+        beginDepositMode(true);
+    }
+
+    static function beginDepositMode(allItems:Bool):Void {
         if (!refreshInventories() || !resolveMembers()) {
             status = "Inventory is not ready.";
             return;
         }
 
+        depositAllMode = allItems;
         transferIndexes = [];
         transferPosition = 0;
         movedStacks = 0;
@@ -677,12 +730,15 @@ class ItemUtilitiesMod {
             if (stack == null)
                 continue;
             var item:Dynamic = HlxRuntime.resolveField(stack, "item");
-            if (isCraftingComponent(item))
+            if (item != null
+                && (depositAllMode ? !isItemLocked(item) : isCraftingComponent(item)))
                 transferIndexes.push(index);
         }
 
         if (transferIndexes.length == 0) {
-            status = "No crafting components to deposit.";
+            status = depositAllMode
+                ? "No unlocked items to deposit."
+                : "No crafting components to deposit.";
             return;
         }
 
@@ -707,7 +763,8 @@ class ItemUtilitiesMod {
             }
 
             var item:Dynamic = HlxRuntime.resolveField(stack, "item");
-            if (!isCraftingComponent(item)) {
+            if (item == null || (depositAllMode && isItemLocked(item))
+                || (!depositAllMode && !isCraftingComponent(item))) {
                 transferPosition++;
                 continue;
             }
@@ -724,8 +781,10 @@ class ItemUtilitiesMod {
                 if (!depositing)
                     return;
                 if (!success) {
-                    depositing = false;
-                    status = "A material could not be deposited.";
+                    // A locked crafting component is rejected by the transfer
+                    // guard. Skip that slot and keep depositing later items.
+                    transferPosition++;
+                    transferNext();
                     return;
                 }
                 movedStacks++;
@@ -750,14 +809,16 @@ class ItemUtilitiesMod {
                     callback
                 ]);
             } catch (_:Dynamic) {
-                depositing = false;
-                status = "A material could not be deposited.";
+                transferPosition++;
+                transferNext();
             }
             return;
         }
 
         depositing = false;
-        status = "Deposited all crafting components.";
+        status = depositAllMode
+            ? "Deposited all unlocked items."
+            : "Deposited available crafting components.";
     }
 
     static function findDestination(item:Dynamic):{ index:Int, count:Dynamic } {
