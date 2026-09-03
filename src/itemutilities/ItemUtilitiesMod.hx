@@ -633,19 +633,26 @@ class ItemUtilitiesMod {
     static function drawCraftingDepositIcon():Void {
         var min = ImGui.getItemRectMin();
         var drawList = ImGui.getWindowDrawList();
-        var metal = ImGui.colorConvertFloat4ToU32(new ImVec4(0.91, 0.70, 0.39, 1));
+        var metal = ImGui.colorConvertFloat4ToU32(new ImVec4(0.78, 0.82, 0.86, 1));
+        var metalShade = ImGui.colorConvertFloat4ToU32(new ImVec4(0.52, 0.58, 0.64, 1));
         var handle = ImGui.colorConvertFloat4ToU32(new ImVec4(0.63, 0.42, 0.24, 1));
         var mark = ImGui.colorConvertFloat4ToU32(new ImVec4(0.94, 0.89, 0.83, 1));
 
-        // Hammer head and handle represent crafting components.
-        ImGui.ImDrawList_AddQuadFilled(drawList,
-            new ImVec2(min.x + 7, min.y + 6),
-            new ImVec2(min.x + 17, min.y + 9),
-            new ImVec2(min.x + 15, min.y + 13),
-            new ImVec2(min.x + 5, min.y + 10), metal);
+        // Draw the handle first so it passes naturally behind the head.
         ImGui.ImDrawList_AddLine(drawList,
-            new ImVec2(min.x + 12, min.y + 11),
-            new ImVec2(min.x + 8, min.y + 19), handle, 3.0);
+            new ImVec2(min.x + 11, min.y + 10),
+            new ImVec2(min.x + 7, min.y + 19), handle, 3.0);
+
+        // Broad striking face with a tapered peen makes the silhouette read
+        // as a hammer even at this icon's small size.
+        ImGui.ImDrawList_AddRectFilled(drawList,
+            new ImVec2(min.x + 4, min.y + 6),
+            new ImVec2(min.x + 11, min.y + 12), metal, 1.0, 0);
+        ImGui.ImDrawList_AddQuadFilled(drawList,
+            new ImVec2(min.x + 11, min.y + 8),
+            new ImVec2(min.x + 18, min.y + 7),
+            new ImVec2(min.x + 18, min.y + 10),
+            new ImVec2(min.x + 11, min.y + 11), metalShade);
 
         drawDepositArrowAndBucket(min, drawList, mark);
     }
