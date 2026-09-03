@@ -634,6 +634,8 @@ class ItemUtilitiesMod {
     }
 
     static function drawLockedItemBadges():Void {
+        if (activeInventoryUI == null || !isUiVisible(activeInventoryUI))
+            return;
         for (entry in visibleSlots) {
             var slot:Dynamic = entry.slot;
             if (!isUiVisible(slot))
@@ -650,8 +652,10 @@ class ItemUtilitiesMod {
                 x = cast HlxRuntime.resolveField(slot, "absX");
                 y = cast HlxRuntime.resolveField(slot, "absY");
             } catch (_:Dynamic) continue;
+            if (!slotIntersectsInventoryViewport(entry, x, y))
+                continue;
 
-            ImGui.setNextWindowPos(new ImVec2(x + 30, y + 2));
+            ImGui.setNextWindowPos(new ImVec2(x + 33, y + 2));
             ImGui.setNextWindowBgAlpha(0);
             var flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
                 | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings
@@ -1153,11 +1157,35 @@ class ItemUtilitiesMod {
     }
 
     static function isUiVisible(object:Dynamic):Bool {
-        if (object == null || fieldOrNull(object, "visible") == false)
+        if (object == null || fieldOrNull(object, "parent") == null)
             return false;
-        // A closed TitleWindow is detached from the scene even if its local
-        // visible flag remains true.
-        return fieldOrNull(object, "parent") != null;
+        var current = object;
+        while (current != null) {
+            if (fieldOrNull(current, "visible") == false)
+                return false;
+            current = fieldOrNull(current, "parent");
+        }
+        return true;
+    }
+
+    static function slotIntersectsInventoryViewport(entry:Dynamic, x:Float, y:Float):Bool {
+        if (entry.inventory != sourceInventory)
+            return true;
+        var viewport = fieldOrNull(playerInventoryComp, "invContent");
+        if (viewport == null || !isUiVisible(viewport))
+            return false;
+        var width = fieldOrNull(viewport, "calculatedWidth");
+        var height = fieldOrNull(viewport, "calculatedHeight");
+        if (width == null || height == null || cast width <= 0 || cast height <= 0)
+            return false;
+        var left = fieldOrNull(viewport, "absX");
+        var top = fieldOrNull(viewport, "absY");
+        if (left == null || top == null)
+            return false;
+        var right:Float = cast left + cast width;
+        var bottom:Float = cast top + cast height;
+        return x < right && x + INVENTORY_SLOT_SIZE > cast left
+            && y < bottom && y + INVENTORY_SLOT_SIZE > cast top;
     }
 
     static function registerSlot(slot:Dynamic):Void {
