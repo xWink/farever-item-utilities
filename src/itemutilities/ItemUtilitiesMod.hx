@@ -260,6 +260,27 @@ class ItemUtilitiesMod {
         return SkipWith(getLockedItemReason());
     }
 
+    // RightClick transfers are routed through Loadout rather than Inventory.
+    @:hlx.prefix(st.Loadout.checkRequestTransfer)
+    static function preventLockedBankRightClickCheck(instance:Dynamic,
+        source:Dynamic, sourceIndex:Int, destination:Dynamic):HlxPrefixResult<Dynamic> {
+        var item = itemAt(source, sourceIndex);
+        return isItemLocked(item) && isBankInventory(destination)
+            ? SkipWith(getLockedItemReason())
+            : Continue;
+    }
+
+    @:hlx.prefix(st.Loadout.requestTransfer)
+    static function preventLockedBankRightClickRequest(instance:Dynamic,
+        source:Dynamic, sourceIndex:Int, destination:Dynamic,
+        callback:Dynamic):HlxPrefixResult<Dynamic> {
+        var item = itemAt(source, sourceIndex);
+        if (!isItemLocked(item) || !isBankInventory(destination))
+            return Continue;
+        rejectActionCallback(callback);
+        return SkipWith(getLockedItemReason());
+    }
+
     static function isBankInventory(inventory:Dynamic):Bool {
         if (inventory == null)
             return false;
@@ -431,7 +452,7 @@ class ItemUtilitiesMod {
         drawDepositIcon();
         if (ImGui.isItemHovered()) {
             setGameButtonCursor();
-            ImGui.setTooltip(" " + (status.length > 0 ? status : "Deposit Crafting Components") + " ");
+            ImGui.setTooltip(" Deposit crafting components  ");
         }
 
         ImGui.end();
@@ -475,7 +496,7 @@ class ItemUtilitiesMod {
             drawLockIcon();
             if (ImGui.isItemHovered()) {
                 setGameButtonCursor();
-                ImGui.setTooltip(lockEditMode ? "Finish editing item locks" : "Edit item locks");
+                ImGui.setTooltip(lockEditMode ? " Done editing " : " Edit locks ");
             }
         }
         ImGui.end();
