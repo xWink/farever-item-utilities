@@ -11,11 +11,14 @@ import imgui.Enums.ImGuiWindowFlags;
 import imgui.ref.BoolRef;
 import sys.FileSystem;
 import sys.io.File;
+import hlx.runtime.Bus;
 import hlx.runtime.HlxPrefixResult;
 
 @:build(hlx.runtime.Mod.build())
 class ItemUtilitiesMod {
     static inline var CONFIG_PATH = "hlx/mods/item-utilities/config.json";
+    static inline var SETTINGS_CHANGED_TOPIC_PREFIX =
+        "better-mod-settings/config-changed/";
     static inline var CRAFTING_COMPONENT_TYPE = "CraftingComponent";
 
     static var enabled = new BoolRef(true);
@@ -23,8 +26,6 @@ class ItemUtilitiesMod {
     static var showLockVisuals = new BoolRef(true);
     static var sortingIgnoresLockedItems = new BoolRef(false);
     static var presetHotkeyKeys:Array<Int> = [0, 0, 0];
-    static var lastConfigModified:Float = -1.0;
-    static var configCheckTimer:Float = 0.0;
 
     static var activeBankWindow:Dynamic;
     static var activeInventoryUI:Dynamic;
@@ -118,17 +119,11 @@ class ItemUtilitiesMod {
     static function main():Void {
         loadConfig();
         saveConfig();
-        updateConfigModifiedTime();
+        Bus.subscribe(
+            SETTINGS_CHANGED_TOPIC_PREFIX + HlxRuntime.moduleName(),
+            onBetterModSettingsChanged
+        );
         ImGui.register(HlxRuntime.moduleName(), draw);
-    }
-
-    @:hlx.postfix(GameApp.update)
-    static function afterGameAppUpdate(instance:Dynamic, dt:Float, result:Void):Void {
-        configCheckTimer += dt;
-        if (configCheckTimer >= 1.0) {
-            configCheckTimer = 0.0;
-            reloadConfigIfChanged();
-        }
     }
 
     @:hlx.postfix(ui.win.BankWindow.init)
@@ -2083,12 +2078,9 @@ class ItemUtilitiesMod {
         catch (_:Dynamic) return false;
     }
 
-    static function reloadConfigIfChanged():Void {
+    static function onBetterModSettingsChanged(_:Dynamic):Void {
         try {
             if (!FileSystem.exists(CONFIG_PATH))
-                return;
-            var modified = FileSystem.stat(CONFIG_PATH).mtime.getTime();
-            if (modified == lastConfigModified)
                 return;
             var data:Dynamic = Json.parse(File.getContent(CONFIG_PATH));
             var wasEnabled = enabled.get();
@@ -2106,14 +2098,6 @@ class ItemUtilitiesMod {
             if (!enabled.get() || !showLockVisuals.get())
                 lockEditMode = false;
             syncDepositButtonVisibility();
-            lastConfigModified = modified;
-        } catch (_:Dynamic) {}
-    }
-
-    static function updateConfigModifiedTime():Void {
-        try {
-            if (FileSystem.exists(CONFIG_PATH))
-                lastConfigModified = FileSystem.stat(CONFIG_PATH).mtime.getTime();
         } catch (_:Dynamic) {}
     }
 
@@ -2222,7 +2206,6 @@ class ItemUtilitiesMod {
             selectedWeaponPresets: selectedWeaponPresets,
             lockedItems: savedLocks
             }, null, "  "));
-            updateConfigModifiedTime();
         } catch (_:Dynamic) {}
     }
 }
