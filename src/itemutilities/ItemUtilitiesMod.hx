@@ -80,6 +80,7 @@ class ItemUtilitiesMod {
     static var hxdKeyType:hl.Bytes;
     static var isKeyPressedMember:hlx.runtime.ResolvedMember;
     static var getGameAppFn:Dynamic;
+    static var getCameraHeroMember:hlx.runtime.ResolvedMember;
     static var eReasonType:hl.Bytes;
     static var lockedItemReason:Dynamic;
 
@@ -109,6 +110,7 @@ class ItemUtilitiesMod {
     static inline var INVENTORY_SLOT_SIZE = 48.0;
     static inline var TOOLTIP_BUTTON_DELAY = 0.2;
     static inline var TOOLTIP_OVERLAP_INSET = 4.0;
+    static inline var PRESET_CONTROLS_WIDTH = 254.0;
     static inline var DEPOSIT_CRAFTING = 0;
     static inline var DEPOSIT_ALL = 1;
     static inline var DEPOSIT_FOOD = 2;
@@ -537,6 +539,8 @@ class ItemUtilitiesMod {
         } catch (_:Dynamic) return;
 
         var controlsX = x + width + 32;
+        if (buttonCovered(controlsX, y, PRESET_CONTROLS_WIDTH, height))
+            return;
         ImGui.setNextWindowPos(new ImVec2(controlsX, y));
         ImGui.setNextWindowBgAlpha(0);
         var flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
@@ -862,6 +866,9 @@ class ItemUtilitiesMod {
                 y = cast HlxRuntime.resolveField(slot, "absY");
             } catch (_:Dynamic) continue;
 
+            if (buttonCovered(x, y, INVENTORY_SLOT_SIZE, INVENTORY_SLOT_SIZE))
+                continue;
+
             ImGui.setNextWindowPos(new ImVec2(x, y));
             ImGui.setNextWindowBgAlpha(0);
             var flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
@@ -901,7 +908,12 @@ class ItemUtilitiesMod {
             if (!slotIntersectsInventoryViewport(entry, x, y))
                 continue;
 
-            ImGui.setNextWindowPos(new ImVec2(x + 40, y + 7));
+            var badgeX = x + 40;
+            var badgeY = y + 7;
+            if (buttonCovered(badgeX, badgeY, 16, 17))
+                continue;
+
+            ImGui.setNextWindowPos(new ImVec2(badgeX, badgeY));
             ImGui.setNextWindowBgAlpha(0);
             var flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
                 | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings
@@ -1795,6 +1807,10 @@ class ItemUtilitiesMod {
     }
 
     static function gameConnectionInfo():Dynamic {
+        return fieldOrNull(currentGameApp(), "connectionInfo");
+    }
+
+    static function currentGameApp():Dynamic {
         try {
             if (gameAppType == null)
                 gameAppType = HlxRuntime.resolveType("GameApp");
@@ -1803,9 +1819,9 @@ class ItemUtilitiesMod {
             var app = getGameAppFn == null
                 ? null
                 : Reflect.callMethod(null, getGameAppFn, []);
-            return fieldOrNull(app, "connectionInfo");
+            return app;
         } catch (error:Dynamic) {
-            logLockError("game connection info", error);
+            logLockError("game app", error);
             return null;
         }
     }
@@ -1814,6 +1830,19 @@ class ItemUtilitiesMod {
         if (activeHero != null && fieldOrNull(activeHero, "loadout") != null)
             return activeHero;
         try {
+            // Preset hotkeys run even while the inventory and character windows
+            // have never been opened. Resolve the active hero directly from the
+            // game in that case; UI-owned hero references remain useful fallbacks.
+            var app = currentGameApp();
+            if (app != null) {
+                if (gameAppType != null && getCameraHeroMember == null)
+                    getCameraHeroMember = HlxRuntime.resolveMember(
+                        gameAppType,
+                        "getCameraHero"
+                    );
+                if (getCameraHeroMember != null)
+                    activeHero = HlxRuntime.callResolved(getCameraHeroMember, [app]);
+            }
             if (activeInventoryUI != null) {
                 if (baseElementType == null)
                     baseElementType = HlxRuntime.resolveType("ui.BaseElement");
