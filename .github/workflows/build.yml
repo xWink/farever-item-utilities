@@ -37,12 +37,9 @@ jobs:
           cp build/item-utilities/item-utilities.hl package/hlx/mods/item-utilities/
           cp configFormats.json package/hlx/mods/item-utilities/
           printf "Requires HLX Core and the Farever ImGui plugin.\nInstall with Vortex, or extract the archive into the Farever game folder.\n" > package/hlx/mods/item-utilities/README.txt
-          cd package
-          zip -r ../farever-item-utilities.zip hlx
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: farever-item-utilities
-          path: farever-item-utilities.zip
-
+          path: package/
