@@ -120,12 +120,14 @@ class ItemUtilitiesMod {
     static var presetEquipment:Dynamic;
     static var presetTransferActive:Bool = false;
     static var lockScanInitialized:Bool = false;
+    static var lockRebuildFrames:Int = 0;
     static var activeHero:Dynamic;
     static var lockErrors:Map<String, Bool> = new Map();
     static var activeTooltip:Dynamic;
     static var activeTooltipShownAt:Float = 0;
     static var activeBaseUI:Dynamic;
     static inline var LOCK_MISSING_FRAME_LIMIT = 120;
+    static inline var LOCK_REBUILD_SETTLE_FRAMES = 60;
     static inline var INVENTORY_SLOT_SIZE = 48.0;
     static inline var TOOLTIP_BUTTON_DELAY = 0.2;
     static inline var TOOLTIP_OVERLAP_INSET = 4.0;
@@ -199,6 +201,7 @@ class ItemUtilitiesMod {
     static function afterPlayerInventoryInit(instance:Dynamic, result:Void):Void {
         // InventoryUI is recreated when changing characters. Do not retain the
         // previous hero while the new character's windows are being built.
+        beginLockInventoryRebuild();
         activeHero = null;
         activeInventoryUI = instance;
         var comp = fieldOrNull(instance, "inventoryComp");
@@ -1952,7 +1955,8 @@ class ItemUtilitiesMod {
             location: tracked == null ? null : tracked.location,
             index: tracked == null ? -1 : tracked.index,
             characterId: tracked == null ? null : tracked.characterId,
-            restored: true
+            restored: true,
+            remapReady: true
         });
         saveConfig();
     }
@@ -1977,6 +1981,14 @@ class ItemUtilitiesMod {
     }
 
     static function reconcileItemLocks():Void {
+        // Farever rebuilds a character's item objects progressively after a
+        // zone or character change. Do not let a temporarily lone duplicate
+        // claim a missing lock before all identical items have materialized.
+        if (lockRebuildFrames > 0) {
+            lockRebuildFrames--;
+            return;
+        }
+
         var current:Map<String, Dynamic> = new Map();
         collectTrackedItems(current);
         if (!lockScanInitialized) {
@@ -1993,6 +2005,7 @@ class ItemUtilitiesMod {
                     || isSavedSlot(record, exact))) {
                 record.missing = 0;
                 record.restored = true;
+                record.remapReady = true;
                 // A split creates another item with the same fingerprint but
                 // leaves this source UID intact. Remember every identical UID
                 // seen while the lock identity is confirmed so the unlocked
@@ -2051,6 +2064,7 @@ class ItemUtilitiesMod {
             // its new runtime identity yet, so never let a lone identical item
             // in another container steal it before the saved container loads.
             if (replacement == null && Reflect.field(record, "restored") == true
+                && Reflect.field(record, "remapReady") == true
                 && candidates.length == 1)
                 replacement = candidates[0];
 
@@ -2059,6 +2073,7 @@ class ItemUtilitiesMod {
                 record.missing = 0;
                 record.known = matchingUids(current, fingerprint);
                 record.restored = true;
+                record.remapReady = true;
                 updateRecordLocation(record, replacement);
                 claimed.set(replacement.uid, true);
                 kept.push(record);
@@ -2074,6 +2089,13 @@ class ItemUtilitiesMod {
         }
         lockRecords = kept;
         if (changed) saveConfig();
+    }
+
+    static function beginLockInventoryRebuild():Void {
+        lockRebuildFrames = LOCK_REBUILD_SETTLE_FRAMES;
+        lockScanInitialized = false;
+        for (record in lockRecords)
+            Reflect.setField(record, "remapReady", false);
     }
 
     static function updateRecordLocation(record:Dynamic, tracked:Dynamic):Bool {
@@ -2595,7 +2617,8 @@ class ItemUtilitiesMod {
                                 location: location,
                                 index: recordInt(record, "index", -1),
                                 characterId: characterId,
-                                restored: false
+                                restored: false,
+                                remapReady: false
                             });
                         }
                     }
