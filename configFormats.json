@@ -21,7 +21,7 @@
     {
       "key": "sortingIgnoresLockedItems",
       "type": "checkbox",
-      "label": "Sorting preserves order of locked items"
+      "label": "Sorting ignores locked items"
     },
     {
       "key": "preset1Hotkey",
