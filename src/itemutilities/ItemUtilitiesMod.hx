@@ -28,6 +28,7 @@ class ItemUtilitiesMod {
     static var presetHotkeyKeys:Array<Int> = [0, 0, 0];
 
     static var activeBankWindow:Dynamic;
+    static var activeScrapWindow:Dynamic;
     static var activeInventoryUI:Dynamic;
     static var activeCharacterUI:Dynamic;
     static var activeInventoryWindow:Dynamic;
@@ -35,16 +36,23 @@ class ItemUtilitiesMod {
     static var depositButton:Dynamic;
     static var sourceInventory:Dynamic;
     static var bankInventory:Dynamic;
+    static var scrapInventory:Dynamic;
+    static var scrapInventoryComp:Dynamic;
     static var depositing:Bool = false;
     static var depositMode:Int = 0;
     static var transferIndexes:Array<Int> = [];
     static var transferPosition:Int = 0;
     static var status:String = "";
     static var movedStacks:Int = 0;
+    static var recyclerDepositing:Bool = false;
+    static var recyclerTransferIndexes:Array<Int> = [];
+    static var recyclerTransferPosition:Int = 0;
 
     static var itemType:hl.Bytes;
     static var inventoryType:hl.Bytes;
     static var bankWindowType:hl.Bytes;
+    static var scrapWindowType:hl.Bytes;
+    static var scrapStationType:hl.Bytes;
     static var arrayObjType:hl.Bytes;
     static var cursorType:hl.Bytes;
     static var systemType:hl.Bytes;
@@ -59,6 +67,8 @@ class ItemUtilitiesMod {
     static var getNextFreeIndexMember:hlx.runtime.ResolvedMember;
     static var requestTransferMember:hlx.runtime.ResolvedMember;
     static var getMyHeroMember:hlx.runtime.ResolvedMember;
+    static var getScrapInventoryMember:hlx.runtime.ResolvedMember;
+    static var isScrappableMember:hlx.runtime.ResolvedMember;
     static var arrayGetDynMember:hlx.runtime.ResolvedMember;
     static var setSystemCursorFn:Dynamic;
     static var buttonCursor:Dynamic;
@@ -135,7 +145,22 @@ class ItemUtilitiesMod {
         depositButton = null;
         status = "";
         cancelDeposit();
+        cancelRecyclerDeposit();
         refreshInventories();
+    }
+
+    @:hlx.postfix(ui.win.Scrap.init)
+    static function afterScrapInit(instance:Dynamic, result:Void):Void {
+        activeScrapWindow = instance;
+        scrapInventory = resolveScrapInventory(instance);
+        scrapInventoryComp = null;
+        cancelDeposit();
+        cancelRecyclerDeposit();
+        selectSourceInventory();
+        if (sourceInventory == null)
+            ensureHeroInventory();
+        selectPlayerInventoryComp();
+        selectScrapInventoryComp();
     }
 
     @:hlx.postfix(ui.win.InventoryWindow.init)
@@ -197,6 +222,7 @@ class ItemUtilitiesMod {
         if (!replaced && inventoryComps.indexOf(instance) < 0)
             inventoryComps.push(instance);
         selectPlayerInventoryComp();
+        selectScrapInventoryComp();
     }
 
     @:hlx.postfix(ui.win.InventorySlot.init)
@@ -412,6 +438,12 @@ class ItemUtilitiesMod {
             depositButton = null;
             bankInventory = null;
         }
+        if (instance == activeScrapWindow) {
+            cancelRecyclerDeposit();
+            activeScrapWindow = null;
+            scrapInventory = null;
+            scrapInventoryComp = null;
+        }
         selectSourceInventory();
         lockScanInitialized = false;
     }
@@ -419,6 +451,8 @@ class ItemUtilitiesMod {
     static function draw():Void {
         if (activeBankWindow != null && enabled.get() && showDepositMaterials.get())
             drawBankHeaderButton();
+        if (activeScrapWindow != null && enabled.get() && showDepositMaterials.get())
+            drawRecyclerHeaderButton();
 
         if (enabled.get()) {
             if (activeInventoryUI == null || !isUiVisible(activeInventoryUI))
@@ -469,6 +503,63 @@ class ItemUtilitiesMod {
             "materials", " Deposit crafting components ");
         drawBankDepositButton(sortButton, x - 38, y, DEPOSIT_ALL,
             "all", " Deposit all ");
+    }
+
+    static function drawRecyclerHeaderButton():Void {
+        if (!isUiVisible(activeScrapWindow))
+            return;
+        if (scrapInventory == null)
+            scrapInventory = resolveScrapInventory(activeScrapWindow);
+        if (scrapInventoryComp == null
+            || fieldOrNull(scrapInventoryComp, "inventory") != scrapInventory)
+            selectScrapInventoryComp();
+
+        var sortButton = fieldOrNull(scrapInventoryComp, "sortButton");
+        if (sortButton == null || !isUiVisible(sortButton))
+            return;
+
+        var xValue = fieldOrNull(sortButton, "absX");
+        var yValue = fieldOrNull(sortButton, "absY");
+        if (xValue == null || yValue == null)
+            return;
+        var x:Float = cast xValue;
+        x -= 38;
+        var y:Float = cast yValue;
+        if (buttonCovered(x, y, 32, 30))
+            return;
+
+        ImGui.setNextWindowPos(new ImVec2(x, y));
+        ImGui.setNextWindowBgAlpha(0);
+        var flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove
+            | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings
+            | ImGuiWindowFlags.NoFocusOnAppearing;
+        ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, new ImVec2(0, 0));
+        ImGui.pushStyleVar(ImGuiStyleVar.FrameRounding, 5.0);
+        ImGui.pushStyleColor(ImGuiCol.Button, new ImVec4(0.40, 0.37, 0.35, 1));
+        ImGui.pushStyleColor(ImGuiCol.ButtonHovered, new ImVec4(0.48, 0.44, 0.41, 1));
+        ImGui.pushStyleColor(ImGuiCol.ButtonActive, new ImVec4(0.32, 0.29, 0.27, 1));
+        ImGui.pushStyleColor(ImGuiCol.Text, new ImVec4(0.92, 0.86, 0.80, 1));
+        if (!ImGui.begin("##item-utilities-recycler-header", null, flags)) {
+            ImGui.end();
+            ImGui.popStyleColor(4);
+            ImGui.popStyleVar(2);
+            return;
+        }
+
+        if (ImGui.button("##recycler-deposit-all", new ImVec2(32, 30))) {
+            playButtonClickSound(sortButton);
+            if (!recyclerDepositing)
+                beginRecyclerDeposit();
+        }
+        drawDepositModeIcon(DEPOSIT_ALL);
+        if (ImGui.isItemHovered()) {
+            setGameButtonCursor();
+            ImGui.setTooltip(" Deposit all ");
+        }
+
+        ImGui.end();
+        ImGui.popStyleColor(4);
+        ImGui.popStyleVar(2);
     }
 
     static function drawBankDepositButton(sortButton:Dynamic, x:Float, y:Float,
@@ -1169,6 +1260,7 @@ class ItemUtilitiesMod {
             return;
         }
 
+        cancelRecyclerDeposit();
         depositMode = mode;
         transferIndexes = [];
         transferPosition = 0;
@@ -1269,6 +1361,98 @@ class ItemUtilitiesMod {
         status = "Deposited all matching unlocked items.";
     }
 
+    static function beginRecyclerDeposit():Void {
+        if (!refreshRecyclerInventories() || !resolveRecyclerMembers())
+            return;
+
+        cancelDeposit();
+        recyclerTransferIndexes = [];
+        recyclerTransferPosition = 0;
+
+        var content = getContent(sourceInventory);
+        if (content == null)
+            return;
+
+        for (index in 0...arrayLength(content)) {
+            var item = itemAt(sourceInventory, index);
+            if (item != null && !isItemLocked(item) && isRecyclerEligible(item))
+                recyclerTransferIndexes.push(index);
+        }
+
+        if (recyclerTransferIndexes.length == 0)
+            return;
+
+        recyclerDepositing = true;
+        transferNextToRecycler();
+    }
+
+    static function transferNextToRecycler():Void {
+        if (!recyclerDepositing || activeScrapWindow == null
+            || !isUiVisible(activeScrapWindow)) {
+            cancelRecyclerDeposit();
+            return;
+        }
+
+        var content = getContent(sourceInventory);
+        while (recyclerTransferPosition < recyclerTransferIndexes.length) {
+            var sourceIndex = recyclerTransferIndexes[recyclerTransferPosition];
+            var item = content == null || sourceIndex >= arrayLength(content)
+                ? null
+                : itemAt(sourceInventory, sourceIndex);
+            if (item == null || isItemLocked(item) || !isRecyclerEligible(item)) {
+                recyclerTransferPosition++;
+                continue;
+            }
+
+            var free:Dynamic;
+            try {
+                free = HlxRuntime.callResolved(getNextFreeIndexMember, [scrapInventory, item]);
+            } catch (_:Dynamic) {
+                recyclerTransferPosition++;
+                continue;
+            }
+            var destinationIndex:Int = cast free;
+            if (destinationIndex < 0) {
+                cancelRecyclerDeposit();
+                return;
+            }
+
+            var callback = function(success:Bool):Void {
+                if (!recyclerDepositing)
+                    return;
+                // Locked items, server-side eligibility changes, and other
+                // rejected transfers should not abort the rest of the batch.
+                recyclerTransferPosition++;
+                transferNextToRecycler();
+            };
+
+            try {
+                HlxRuntime.callResolved(requestTransferMember, [
+                    sourceInventory,
+                    sourceIndex,
+                    scrapInventory,
+                    destinationIndex,
+                    null,
+                    null,
+                    callback
+                ]);
+            } catch (_:Dynamic) {
+                recyclerTransferPosition++;
+                transferNextToRecycler();
+            }
+            return;
+        }
+
+        cancelRecyclerDeposit();
+    }
+
+    static function isRecyclerEligible(item:Dynamic):Bool {
+        if (item == null || isScrappableMember == null)
+            return false;
+        try return HlxRuntime.callResolved(isScrappableMember, [item]) == true
+        catch (_:Dynamic) return false;
+    }
+
     static function findDestination(item:Dynamic):{ index:Int, count:Dynamic } {
         var bankContent = getContent(bankInventory);
         if (bankContent != null) {
@@ -1347,6 +1531,44 @@ class ItemUtilitiesMod {
         return sourceInventory != null && bankInventory != null;
     }
 
+    static function refreshRecyclerInventories():Bool {
+        if (activeScrapWindow == null || !isUiVisible(activeScrapWindow))
+            return false;
+        try {
+            if (scrapInventory == null)
+                scrapInventory = resolveScrapInventory(activeScrapWindow);
+            selectSourceInventory();
+            if (sourceInventory == null)
+                ensureHeroInventory();
+            selectPlayerInventoryComp();
+            selectScrapInventoryComp();
+        } catch (_:Dynamic) {
+            return false;
+        }
+        return sourceInventory != null && scrapInventory != null
+            && scrapInventoryComp != null;
+    }
+
+    static function resolveScrapInventory(window:Dynamic):Dynamic {
+        if (window == null)
+            return null;
+        try {
+            if (scrapWindowType == null)
+                scrapWindowType = HlxRuntime.resolveType("ui.win.Scrap");
+            if (scrapWindowType != null && getScrapInventoryMember == null)
+                getScrapInventoryMember = HlxRuntime.resolveMember(
+                    scrapWindowType,
+                    "get_inventory"
+                );
+            return getScrapInventoryMember == null
+                ? null
+                : HlxRuntime.callResolved(getScrapInventoryMember, [window]);
+        } catch (error:Dynamic) {
+            logLockError("recycler inventory", error);
+            return null;
+        }
+    }
+
     static function resolveHeroInventory():Dynamic {
         try {
             if (bankWindowType == null)
@@ -1374,7 +1596,8 @@ class ItemUtilitiesMod {
         sourceInventory = null;
         activeInventoryWindow = null;
         for (entry in openInventoryWindows) {
-            if (entry.window == activeBankWindow || entry.inventory == bankInventory)
+            if (entry.window == activeBankWindow || entry.inventory == bankInventory
+                || entry.window == activeScrapWindow || entry.inventory == scrapInventory)
                 continue;
             activeInventoryWindow = entry.window;
             sourceInventory = entry.inventory;
@@ -1419,6 +1642,20 @@ class ItemUtilitiesMod {
         for (comp in inventoryComps) {
             if (fieldOrNull(comp, "inventory") == sourceInventory) {
                 playerInventoryComp = comp;
+                return;
+            }
+        }
+    }
+
+    static function selectScrapInventoryComp():Void {
+        scrapInventoryComp = null;
+        if (scrapInventory == null)
+            return;
+        for (comp in inventoryComps) {
+            if (fieldOrNull(comp, "inventory") == scrapInventory
+                && (activeScrapWindow == null
+                    || isAncestorOf(activeScrapWindow, comp))) {
+                scrapInventoryComp = comp;
                 return;
             }
         }
@@ -1528,6 +1765,7 @@ class ItemUtilitiesMod {
             for (index in 0...arrayLength(windows)) {
                 var window = arrayGet(windows, index);
                 if (window == null || window == activeBankWindow
+                    || window == activeScrapWindow
                     || window == activeCharacterUI
                     || window == activeInventoryWindow
                     || isAncestorOf(window, activeInventoryUI)
@@ -2020,6 +2258,19 @@ class ItemUtilitiesMod {
             && getNextFreeIndexMember != null && requestTransferMember != null;
     }
 
+    static function resolveRecyclerMembers():Bool {
+        if (!resolveMembers())
+            return false;
+        if (scrapStationType == null)
+            scrapStationType = HlxRuntime.resolveType("ent.interactible.ScrapStation");
+        if (scrapStationType != null && isScrappableMember == null)
+            isScrappableMember = HlxRuntime.resolveStaticMember(
+                scrapStationType,
+                "isScrappable"
+            );
+        return isScrappableMember != null;
+    }
+
     static function installDepositButton():Void {
         try {
             if (!resolveUiMembers())
@@ -2098,6 +2349,12 @@ class ItemUtilitiesMod {
         transferPosition = 0;
     }
 
+    static function cancelRecyclerDeposit():Void {
+        recyclerDepositing = false;
+        recyclerTransferIndexes = [];
+        recyclerTransferPosition = 0;
+    }
+
     static function checkPresetHotkeys():Void {
         if (presetTransferActive)
             return;
@@ -2137,8 +2394,10 @@ class ItemUtilitiesMod {
             if (Reflect.hasField(data, "sortingIgnoresLockedItems"))
                 sortingIgnoresLockedItems.set(Reflect.field(data, "sortingIgnoresLockedItems"));
             loadPresetHotkeyConfig(data);
-            if ((!enabled.get() && wasEnabled) || !showDepositMaterials.get())
+            if ((!enabled.get() && wasEnabled) || !showDepositMaterials.get()) {
                 cancelDeposit();
+                cancelRecyclerDeposit();
+            }
             if (!enabled.get() || !showLockVisuals.get())
                 lockEditMode = false;
             syncDepositButtonVisibility();
