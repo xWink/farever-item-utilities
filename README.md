@@ -17,6 +17,12 @@ Adds six deposit buttons beside the bank's Sort button:
 
 The deposit buttons can be hidden from the mod settings.
 
+### Recycler deposit shortcut
+
+Adds a **Deposit all** button beside the Spark Recycler's Sort button. It moves
+every eligible unlocked item into the Recycler, skips locked or rejected items,
+and stops when the Recycler is full or no eligible items remain.
+
 ### Item locking
 
 Adds an item-locking mode beside the character inventory's Sort button. Enable locking mode and click inventory items to lock or unlock them.
@@ -54,7 +60,7 @@ Press **F9 (default)** to open the settings menu. The settings hotkey is configu
 Available settings include:
 
 - Enable or disable Item Utilities
-- Show or hide bank deposit buttons
+- Show or hide bank and Recycler deposit buttons
 - Show or hide item-locking visuals
 - Preserve the relative order of locked items while sorting
 - Delete all saved locks
