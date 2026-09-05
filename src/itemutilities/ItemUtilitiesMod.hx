@@ -56,6 +56,7 @@ class ItemUtilitiesMod {
     static var lockedSortCallback:Dynamic;
     static var lockedSortSucceeded:Bool = true;
     static var lockedSortWaiting:Bool = false;
+    static var lockedSortPendingMoves:Array<Dynamic> = [];
 
     static var itemType:hl.Bytes;
     static var inventoryType:hl.Bytes;
@@ -120,14 +121,12 @@ class ItemUtilitiesMod {
     static var presetEquipment:Dynamic;
     static var presetTransferActive:Bool = false;
     static var lockScanInitialized:Bool = false;
-    static var lockRebuildFrames:Int = 0;
     static var activeHero:Dynamic;
     static var lockErrors:Map<String, Bool> = new Map();
     static var activeTooltip:Dynamic;
     static var activeTooltipShownAt:Float = 0;
     static var activeBaseUI:Dynamic;
     static inline var LOCK_MISSING_FRAME_LIMIT = 120;
-    static inline var LOCK_REBUILD_SETTLE_FRAMES = 60;
     static inline var INVENTORY_SLOT_SIZE = 48.0;
     static inline var TOOLTIP_BUTTON_DELAY = 0.2;
     static inline var TOOLTIP_OVERLAP_INSET = 4.0;
@@ -201,7 +200,6 @@ class ItemUtilitiesMod {
     static function afterPlayerInventoryInit(instance:Dynamic, result:Void):Void {
         // InventoryUI is recreated when changing characters. Do not retain the
         // previous hero while the new character's windows are being built.
-        beginLockInventoryRebuild();
         activeHero = null;
         activeInventoryUI = instance;
         var comp = fieldOrNull(instance, "inventoryComp");
@@ -424,6 +422,7 @@ class ItemUtilitiesMod {
         lockedSortCallback = callback;
         lockedSortSucceeded = true;
         lockedSortWaiting = false;
+        lockedSortPendingMoves = [];
         return SkipWith(null);
     }
 
@@ -1482,6 +1481,11 @@ class ItemUtilitiesMod {
             return;
         }
 
+        if (lockedSortPendingMoves.length > 0) {
+            dispatchLockedSortMove();
+            return;
+        }
+
         while (lockedSortPosition < lockedSortDesiredItems.length
             && lockedSortPosition < lockedSortTargetIndexes.length) {
             var desiredItem = lockedSortDesiredItems[lockedSortPosition];
@@ -1520,35 +1524,91 @@ class ItemUtilitiesMod {
                 continue;
             }
 
-            var callback = function(success:Bool):Void {
-                if (!lockedSortActive)
-                    return;
-                lockedSortWaiting = false;
-                if (!success)
-                    lockedSortSucceeded = false;
-                lockedSortPosition++;
-            };
-
-            try {
-                lockedSortWaiting = true;
-                HlxRuntime.callResolved(requestTransferMember, [
-                    lockedSortInventory,
-                    sourceIndex,
-                    lockedSortInventory,
-                    targetIndex,
-                    null,
-                    null,
-                    callback
-                ]);
-            } catch (_:Dynamic) {
-                lockedSortWaiting = false;
-                lockedSortSucceeded = false;
-                lockedSortPosition++;
+            if (targetItem == null) {
+                lockedSortPendingMoves.push({
+                    source: sourceIndex,
+                    destination: targetIndex
+                });
+            } else {
+                // Farever's own compression code only requests transfers into
+                // empty slots. Use one unlocked empty slot as a temporary so
+                // an occupied target is reordered through the same safe path.
+                var emptyIndex = -1;
+                for (index in 0...arrayLength(content)) {
+                    if (index != sourceIndex && index != targetIndex
+                        && (index >= lockedSortFixedIndexes.length
+                            || !lockedSortFixedIndexes[index])
+                        && itemAt(lockedSortInventory, index) == null) {
+                        emptyIndex = index;
+                        break;
+                    }
+                }
+                if (emptyIndex >= 0) {
+                    lockedSortPendingMoves.push({
+                        source: targetIndex,
+                        destination: emptyIndex
+                    });
+                    lockedSortPendingMoves.push({
+                        source: sourceIndex,
+                        destination: targetIndex
+                    });
+                    lockedSortPendingMoves.push({
+                        source: emptyIndex,
+                        destination: sourceIndex
+                    });
+                } else {
+                    // A completely full inventory has no temporary slot. The
+                    // native transfer path can swap two different stacks.
+                    lockedSortPendingMoves.push({
+                        source: sourceIndex,
+                        destination: targetIndex
+                    });
+                }
             }
+            dispatchLockedSortMove();
             return;
         }
 
         finishLockedSort();
+    }
+
+    static function dispatchLockedSortMove():Void {
+        if (!lockedSortActive || lockedSortWaiting
+            || lockedSortPendingMoves.length == 0)
+            return;
+        var move = lockedSortPendingMoves[0];
+        var sourceIndex:Int = cast Reflect.field(move, "source");
+        var destinationIndex:Int = cast Reflect.field(move, "destination");
+        var callback = function(success:Bool):Void {
+            if (!lockedSortActive)
+                return;
+            lockedSortWaiting = false;
+            if (!success) {
+                lockedSortSucceeded = false;
+                finishLockedSort();
+                return;
+            }
+            lockedSortPendingMoves.shift();
+            if (lockedSortPendingMoves.length == 0)
+                lockedSortPosition++;
+        };
+
+        try {
+            lockedSortWaiting = true;
+            HlxRuntime.callResolved(requestTransferMember, [
+                lockedSortInventory,
+                sourceIndex,
+                lockedSortInventory,
+                destinationIndex,
+                null,
+                null,
+                callback
+            ]);
+        } catch (_:Dynamic) {
+            lockedSortWaiting = false;
+            lockedSortSucceeded = false;
+            finishLockedSort();
+        }
     }
 
     static function itemsEqual(left:Dynamic, right:Dynamic):Bool {
@@ -1955,8 +2015,7 @@ class ItemUtilitiesMod {
             location: tracked == null ? null : tracked.location,
             index: tracked == null ? -1 : tracked.index,
             characterId: tracked == null ? null : tracked.characterId,
-            restored: true,
-            remapReady: true
+            restored: true
         });
         saveConfig();
     }
@@ -1981,14 +2040,6 @@ class ItemUtilitiesMod {
     }
 
     static function reconcileItemLocks():Void {
-        // Farever rebuilds a character's item objects progressively after a
-        // zone or character change. Do not let a temporarily lone duplicate
-        // claim a missing lock before all identical items have materialized.
-        if (lockRebuildFrames > 0) {
-            lockRebuildFrames--;
-            return;
-        }
-
         var current:Map<String, Dynamic> = new Map();
         collectTrackedItems(current);
         if (!lockScanInitialized) {
@@ -2005,7 +2056,6 @@ class ItemUtilitiesMod {
                     || isSavedSlot(record, exact))) {
                 record.missing = 0;
                 record.restored = true;
-                record.remapReady = true;
                 // A split creates another item with the same fingerprint but
                 // leaves this source UID intact. Remember every identical UID
                 // seen while the lock identity is confirmed so the unlocked
@@ -2035,6 +2085,7 @@ class ItemUtilitiesMod {
             var fingerprint = recordString(record, "fingerprint");
             var known:Array<Dynamic> = cast Reflect.field(record, "known");
             var candidates:Array<Dynamic> = [];
+            var matching = matchingUids(current, fingerprint);
             for (candidateUid in current.keys()) {
                 var candidate = current.get(candidateUid);
                 if (candidate.fingerprint != fingerprint || claimed.exists(candidateUid))
@@ -2049,9 +2100,15 @@ class ItemUtilitiesMod {
             }
 
             var replacement:Dynamic = null;
+            // While an inventory is being reconstructed, identical items can
+            // appear one at a time. Wait until at least as many copies are
+            // visible as when this lock last had a confirmed identity before
+            // choosing any newly-created UID.
+            var knownCount = known == null ? 0 : known.length;
+            var duplicateSetReady = knownCount == 0 || matching.length >= knownCount;
             var savedLocation = recordString(record, "location");
             var savedIndex = recordInt(record, "index", -1);
-            if (savedLocation != null && savedIndex >= 0) {
+            if (duplicateSetReady && savedLocation != null && savedIndex >= 0) {
                 for (candidate in candidates) {
                     if (candidate.location == savedLocation && candidate.index == savedIndex) {
                         replacement = candidate;
@@ -2063,8 +2120,8 @@ class ItemUtilitiesMod {
             // container and slot. A record loaded from disk has not established
             // its new runtime identity yet, so never let a lone identical item
             // in another container steal it before the saved container loads.
-            if (replacement == null && Reflect.field(record, "restored") == true
-                && Reflect.field(record, "remapReady") == true
+            if (duplicateSetReady && replacement == null
+                && Reflect.field(record, "restored") == true
                 && candidates.length == 1)
                 replacement = candidates[0];
 
@@ -2073,7 +2130,6 @@ class ItemUtilitiesMod {
                 record.missing = 0;
                 record.known = matchingUids(current, fingerprint);
                 record.restored = true;
-                record.remapReady = true;
                 updateRecordLocation(record, replacement);
                 claimed.set(replacement.uid, true);
                 kept.push(record);
@@ -2089,13 +2145,6 @@ class ItemUtilitiesMod {
         }
         lockRecords = kept;
         if (changed) saveConfig();
-    }
-
-    static function beginLockInventoryRebuild():Void {
-        lockRebuildFrames = LOCK_REBUILD_SETTLE_FRAMES;
-        lockScanInitialized = false;
-        for (record in lockRecords)
-            Reflect.setField(record, "remapReady", false);
     }
 
     static function updateRecordLocation(record:Dynamic, tracked:Dynamic):Bool {
@@ -2498,6 +2547,7 @@ class ItemUtilitiesMod {
         lockedSortCallback = null;
         lockedSortSucceeded = true;
         lockedSortWaiting = false;
+        lockedSortPendingMoves = [];
         if (notifyFailure && callback != null)
             try Reflect.callMethod(null, callback, [false]) catch (_:Dynamic) {}
     }
@@ -2617,8 +2667,7 @@ class ItemUtilitiesMod {
                                 location: location,
                                 index: recordInt(record, "index", -1),
                                 characterId: characterId,
-                                restored: false,
-                                remapReady: false
+                                restored: false
                             });
                         }
                     }
