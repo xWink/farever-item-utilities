@@ -851,9 +851,9 @@ class ItemUtilitiesMod {
     static function drawLockSlotOverlays():Void {
         for (entry in visibleSlots) {
             var slot:Dynamic = entry.slot;
-            if (slot == null || entry.inventory != sourceInventory)
+            if (!isActiveInventoryGridSlot(entry, slot))
                 continue;
-            var item = itemAt(entry.inventory, entry.index);
+            var item = displayedSlotItem(entry, slot);
             if (item == null)
                 continue;
 
@@ -891,11 +891,9 @@ class ItemUtilitiesMod {
             return;
         for (entry in visibleSlots) {
             var slot:Dynamic = entry.slot;
-            if (!isUiVisible(slot))
+            if (!isActiveInventoryGridSlot(entry, slot))
                 continue;
-            var item = itemAt(entry.inventory, entry.index);
-            if (item == null)
-                item = fieldOrNull(slot, "item");
+            var item = displayedSlotItem(entry, slot);
             if (!isItemLocked(item))
                 continue;
 
@@ -1461,12 +1459,22 @@ class ItemUtilitiesMod {
     }
 
     static function slotIntersectsInventoryViewport(entry:Dynamic, x:Float, y:Float):Bool {
-        if (entry.inventory != sourceInventory)
-            return true;
         var viewport = inventoryViewportBounds();
         return viewport != null
             && x < viewport.right && x + INVENTORY_SLOT_SIZE > viewport.left
             && y < viewport.bottom && y + INVENTORY_SLOT_SIZE > viewport.top;
+    }
+
+    static function isActiveInventoryGridSlot(entry:Dynamic, slot:Dynamic):Bool {
+        if (slot == null || entry.inventory != sourceInventory || !isUiVisible(slot))
+            return false;
+        var viewport = fieldOrNull(playerInventoryComp, "invContent");
+        return viewport != null && isUiVisible(viewport) && isAncestorOf(viewport, slot);
+    }
+
+    static function displayedSlotItem(entry:Dynamic, slot:Dynamic):Dynamic {
+        var item = fieldOrNull(slot, "item");
+        return item != null ? item : itemAt(entry.inventory, entry.index);
     }
 
     static function registerSlot(slot:Dynamic):Void {
@@ -1476,8 +1484,13 @@ class ItemUtilitiesMod {
             return;
         var index:Int = cast rawIndex;
         for (entry in visibleSlots) {
-            if (entry.inventory == inventory && entry.index == index) {
-                entry.slot = slot;
+            // InventorySlot instances are also created for item tooltips and
+            // equipment previews. Track each concrete UI object separately:
+            // keying by inventory/index lets a hover-created slot replace the
+            // real grid slot and leaves its badge at the tooltip's coordinates.
+            if (entry.slot == slot) {
+                entry.inventory = inventory;
+                entry.index = index;
                 return;
             }
         }
