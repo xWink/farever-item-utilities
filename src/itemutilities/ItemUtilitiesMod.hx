@@ -131,6 +131,7 @@ class ItemUtilitiesMod {
     static inline var TOOLTIP_BUTTON_DELAY = 0.2;
     static inline var TOOLTIP_OVERLAP_INSET = 4.0;
     static inline var PRESET_CONTROLS_WIDTH = 254.0;
+    static inline var ITEM_FINGERPRINT_VERSION = "v2|";
     static inline var DEPOSIT_CRAFTING = 0;
     static inline var DEPOSIT_ALL = 1;
     static inline var DEPOSIT_FOOD = 2;
@@ -2047,6 +2048,43 @@ class ItemUtilitiesMod {
         }
 
         var changed = false;
+        // Migrate fingerprints written by older releases. Those fingerprints
+        // omitted rarity and upgrade state, so only trust the exact UID or a
+        // same-kind item still occupying the saved slot.
+        for (record in lockRecords) {
+            var oldFingerprint = recordString(record, "fingerprint");
+            if (oldFingerprint == null
+                || StringTools.startsWith(oldFingerprint, ITEM_FINGERPRINT_VERSION))
+                continue;
+            var separator = oldFingerprint.indexOf("|");
+            var oldKind = separator < 0 ? oldFingerprint
+                : oldFingerprint.substr(0, separator);
+            var uid = recordString(record, "uid");
+            var tracked = uid == null ? null : current.get(uid);
+            if (tracked == null || !recordAppliesToTrackedItem(record, tracked)
+                || tracked.kind != oldKind) {
+                tracked = null;
+                for (candidateUid in current.keys()) {
+                    var candidate = current.get(candidateUid);
+                    if (candidate.kind == oldKind
+                        && recordAppliesToTrackedItem(record, candidate)
+                        && isSavedSlot(record, candidate)) {
+                        tracked = candidate;
+                        break;
+                    }
+                }
+            }
+            if (tracked != null) {
+                record.uid = tracked.uid;
+                record.fingerprint = tracked.fingerprint;
+                record.known = matchingUids(current, tracked.fingerprint);
+                record.missing = 0;
+                record.restored = true;
+                updateRecordLocation(record, tracked);
+                changed = true;
+            }
+        }
+
         var claimed:Map<String, Bool> = new Map();
         for (record in lockRecords) {
             var uid = recordString(record, "uid");
@@ -2061,6 +2099,10 @@ class ItemUtilitiesMod {
                 // seen while the lock identity is confirmed so the unlocked
                 // split-off stack cannot steal the lock when the source stack
                 // is moved and receives a replacement UID later.
+                if (recordString(record, "fingerprint") != exact.fingerprint) {
+                    record.fingerprint = exact.fingerprint;
+                    changed = true;
+                }
                 record.known = matchingUids(current, exact.fingerprint);
                 if (updateRecordLocation(record, exact)) changed = true;
                 claimed.set(uid, true);
@@ -2210,7 +2252,8 @@ class ItemUtilitiesMod {
                 var uid = itemUid(item);
                 var fingerprint = itemFingerprint(item);
                 if (uid != null && fingerprint != null)
-                    result.set(uid, { uid: uid, fingerprint: fingerprint, inventory: inventory,
+                    result.set(uid, { uid: uid, fingerprint: fingerprint,
+                        kind: Std.string(fieldOrNull(item, "kind")), inventory: inventory,
                         location: entry.location, index: index,
                         characterId: entry.characterId });
             }
@@ -2320,17 +2363,51 @@ class ItemUtilitiesMod {
         if (item == null)
             return null;
         try {
-            var kind = Std.string(HlxRuntime.resolveField(item, "kind"));
-            var flags = Std.string(HlxRuntime.resolveField(item, "flags"));
-            var affixes = HlxRuntime.resolveField(item, "afxUIDs");
             var parts:Array<String> = [];
-            for (index in 0...arrayLength(affixes))
-                parts.push(Std.string(arrayGet(affixes, index)));
-            return kind + "|" + flags + "|" + parts.join(",");
+            var flags = fieldOrNull(item, "flags");
+            var definition = fieldOrNull(item, "inf");
+            parts.push(fingerprintValue(fieldOrNull(item, "kind")));
+            parts.push(fingerprintValue(fieldOrNull(flags, "value")));
+            parts.push(fingerprintArray(fieldOrNull(item, "afxUIDs"), false));
+            parts.push(fingerprintValue(fieldOrNull(item, "level")));
+            parts.push(fingerprintValue(fieldOrNull(item, "upgradeLevel")));
+            parts.push(fingerprintValue(fieldOrNull(item, "rarity")));
+            parts.push(fingerprintValue(fieldOrNull(definition, "rarity")));
+            parts.push(fingerprintArray(fieldOrNull(item, "slots"), false));
+            parts.push(fingerprintArray(fieldOrNull(item, "effects"), true));
+            return ITEM_FINGERPRINT_VERSION + Json.stringify(parts);
         } catch (error:Dynamic) {
             logLockError("fingerprint", error);
             return null;
         }
+    }
+
+    static function fingerprintValue(value:Dynamic):String {
+        return value == null ? "<null>" : Std.string(value);
+    }
+
+    static function fingerprintArray(value:Dynamic, weaponEffects:Bool):String {
+        if (value == null)
+            return "[]";
+        // Gear slots and weapon effects are hxbit.ArrayProxyData. Affix UIDs
+        // are a native typed array. Unwrap proxies, then read both through the
+        // common HashLink array interface.
+        var inner = fieldOrNull(value, "array");
+        if (inner != null)
+            value = inner;
+        var parts:Array<String> = [];
+        for (index in 0...arrayLength(value)) {
+            var entry = arrayGet(value, index);
+            if (weaponEffects) {
+                parts.push(Json.stringify([
+                    fingerprintValue(fieldOrNull(entry, "skill")),
+                    fingerprintValue(fieldOrNull(entry, "source"))
+                ]));
+            } else {
+                parts.push(fingerprintValue(entry));
+            }
+        }
+        return Json.stringify(parts);
     }
 
     static function playButtonClickSound(referenceButton:Dynamic):Void {
@@ -2407,7 +2484,7 @@ class ItemUtilitiesMod {
             return null;
         try {
             if (arrayObjType == null)
-                arrayObjType = HlxRuntime.resolveType("hl.types.ArrayObj");
+                arrayObjType = HlxRuntime.resolveType("hl.types.ArrayBase");
             if (arrayObjType == null)
                 return null;
             if (arrayGetDynMember == null)
