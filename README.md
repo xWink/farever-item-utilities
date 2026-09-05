@@ -38,7 +38,8 @@ Locks follow items as they move between inventory and equipment. They are persis
 
 Locking visuals can be hidden without disabling or deleting saved locks. The settings menu also includes a separately confirmed **Delete all saved locks** action.
 
-An optional **Sorting preserves order of locked items** setting keeps locked items in their existing relative order while sorting and compacting the inventory. This works best when locked items are placed first.
+An optional **Sorting ignores locked items** setting keeps every locked item in
+its exact inventory slot while sorting the unlocked items around it.
 
 ### Weapon presets
 
@@ -62,7 +63,7 @@ Available settings include:
 - Enable or disable Item Utilities
 - Show or hide bank and Recycler deposit buttons
 - Show or hide item-locking visuals
-- Preserve the relative order of locked items while sorting
+- Keep locked items in their exact slots while sorting
 - Delete all saved locks
 - Configure or clear hotkeys for weapon presets 1–3
 - Change the settings-menu hotkey
