@@ -47,6 +47,15 @@ class ItemUtilitiesMod {
     static var recyclerDepositing:Bool = false;
     static var recyclerTransferIndexes:Array<Int> = [];
     static var recyclerTransferPosition:Int = 0;
+    static var lockedSortActive:Bool = false;
+    static var lockedSortInventory:Dynamic;
+    static var lockedSortDesiredItems:Array<Dynamic> = [];
+    static var lockedSortTargetIndexes:Array<Int> = [];
+    static var lockedSortFixedIndexes:Array<Bool> = [];
+    static var lockedSortPosition:Int = 0;
+    static var lockedSortCallback:Dynamic;
+    static var lockedSortSucceeded:Bool = true;
+    static var lockedSortWaiting:Bool = false;
 
     static var itemType:hl.Bytes;
     static var inventoryType:hl.Bytes;
@@ -369,44 +378,50 @@ class ItemUtilitiesMod {
     }
 
     @:hlx.prefix(st.Inventory.requestSort)
-    static function preserveLockedItemOrderDuringSort(instance:Dynamic, indexes:Array<Int>,
+    static function ignoreLockedItemsDuringSort(instance:Dynamic, indexes:Array<Int>,
         callback:Dynamic):HlxPrefixResult<Dynamic> {
         if (!sortingIgnoresLockedItems.get() || instance != sourceInventory || indexes == null)
             return Continue;
 
-        // Farever always compacts requestSort output. Keep each locked item at
-        // its current ordinal position in that compacted list, while using the
-        // game's already-sorted order for every unlocked position.
-        var unlockedSorted:Array<Int> = [];
+        var content = getContent(instance);
+        if (content == null || !resolveMembers())
+            return Continue;
+
+        var fixedIndexes:Array<Bool> = [];
         var lockedCount = 0;
-        for (sourceIndex in indexes) {
-            if (isItemLocked(itemAt(instance, sourceIndex)))
+        for (index in 0...arrayLength(content)) {
+            var locked = isItemLocked(itemAt(instance, index));
+            fixedIndexes.push(locked);
+            if (locked)
                 lockedCount++;
-            else
-                unlockedSorted.push(sourceIndex);
         }
         if (lockedCount == 0)
             return Continue;
 
-        var compactOrder:Array<Int> = [];
-        var unlockedIndex = 0;
-        var content = getContent(instance);
-        for (sourceIndex in 0...arrayLength(content)) {
+        var desiredItems:Array<Dynamic> = [];
+        for (sourceIndex in indexes) {
             var item = itemAt(instance, sourceIndex);
-            if (item == null)
-                continue;
-            if (isItemLocked(item))
-                compactOrder.push(sourceIndex);
-            else {
-                compactOrder.push(unlockedSorted[unlockedIndex]);
-                unlockedIndex++;
-            }
+            if (item != null && !isItemLocked(item))
+                desiredItems.push(item);
         }
-        if (compactOrder.length != indexes.length)
-            return Continue;
-        for (index in 0...indexes.length)
-            indexes[index] = compactOrder[index];
-        return Continue;
+
+        var targetIndexes:Array<Int> = [];
+        for (index in 0...fixedIndexes.length) {
+            if (!fixedIndexes[index] && targetIndexes.length < desiredItems.length)
+                targetIndexes.push(index);
+        }
+
+        cancelLockedSort(false);
+        lockedSortActive = true;
+        lockedSortInventory = instance;
+        lockedSortDesiredItems = desiredItems;
+        lockedSortTargetIndexes = targetIndexes;
+        lockedSortFixedIndexes = fixedIndexes;
+        lockedSortPosition = 0;
+        lockedSortCallback = callback;
+        lockedSortSucceeded = true;
+        lockedSortWaiting = false;
+        return SkipWith(null);
     }
 
     @:hlx.postfix(ui.win.TitleWindow.onRemove)
@@ -418,6 +433,7 @@ class ItemUtilitiesMod {
 
         if (instance == activeInventoryWindow) {
             lockEditMode = false;
+            cancelLockedSort(false);
             activeInventoryWindow = null;
             sourceInventory = null;
             playerInventoryComp = null;
@@ -425,6 +441,7 @@ class ItemUtilitiesMod {
         }
         if (instance == activeInventoryUI) {
             lockEditMode = false;
+            cancelLockedSort(false);
             activeInventoryUI = null;
             playerInventoryComp = null;
         }
@@ -449,6 +466,9 @@ class ItemUtilitiesMod {
     }
 
     static function draw():Void {
+        if (lockedSortActive && !lockedSortWaiting)
+            transferNextLockedSortItem();
+
         if (activeBankWindow != null && enabled.get() && showDepositMaterials.get())
             drawBankHeaderButton();
         if (activeScrapWindow != null && enabled.get() && showDepositMaterials.get())
@@ -1453,6 +1473,96 @@ class ItemUtilitiesMod {
         catch (_:Dynamic) return false;
     }
 
+    static function transferNextLockedSortItem():Void {
+        if (!lockedSortActive || lockedSortInventory == null) {
+            cancelLockedSort(false);
+            return;
+        }
+
+        while (lockedSortPosition < lockedSortDesiredItems.length
+            && lockedSortPosition < lockedSortTargetIndexes.length) {
+            var desiredItem = lockedSortDesiredItems[lockedSortPosition];
+            var targetIndex = lockedSortTargetIndexes[lockedSortPosition];
+            var targetItem = itemAt(lockedSortInventory, targetIndex);
+
+            // A lock added while sorting is in progress becomes fixed
+            // immediately, even though it was not part of the initial set.
+            if (isItemLocked(targetItem)) {
+                lockedSortSucceeded = false;
+                lockedSortPosition++;
+                continue;
+            }
+            if (itemsEqual(targetItem, desiredItem)) {
+                lockedSortPosition++;
+                continue;
+            }
+
+            var sourceIndex = -1;
+            var content = getContent(lockedSortInventory);
+            for (index in 0...arrayLength(content)) {
+                if (index == targetIndex
+                    || (index < lockedSortFixedIndexes.length
+                        && lockedSortFixedIndexes[index]))
+                    continue;
+                var candidate = itemAt(lockedSortInventory, index);
+                if (!isItemLocked(candidate) && itemsEqual(candidate, desiredItem)) {
+                    sourceIndex = index;
+                    break;
+                }
+            }
+
+            if (sourceIndex < 0) {
+                lockedSortSucceeded = false;
+                lockedSortPosition++;
+                continue;
+            }
+
+            var callback = function(success:Bool):Void {
+                if (!lockedSortActive)
+                    return;
+                lockedSortWaiting = false;
+                if (!success)
+                    lockedSortSucceeded = false;
+                lockedSortPosition++;
+            };
+
+            try {
+                lockedSortWaiting = true;
+                HlxRuntime.callResolved(requestTransferMember, [
+                    lockedSortInventory,
+                    sourceIndex,
+                    lockedSortInventory,
+                    targetIndex,
+                    null,
+                    null,
+                    callback
+                ]);
+            } catch (_:Dynamic) {
+                lockedSortWaiting = false;
+                lockedSortSucceeded = false;
+                lockedSortPosition++;
+            }
+            return;
+        }
+
+        finishLockedSort();
+    }
+
+    static function itemsEqual(left:Dynamic, right:Dynamic):Bool {
+        if (left == null || right == null || equalsMember == null)
+            return left == right;
+        try return HlxRuntime.callResolved(equalsMember, [left, right]) == true
+        catch (_:Dynamic) return left == right;
+    }
+
+    static function finishLockedSort():Void {
+        var callback = lockedSortCallback;
+        var success = lockedSortSucceeded;
+        cancelLockedSort(false);
+        if (callback != null)
+            try Reflect.callMethod(null, callback, [success]) catch (_:Dynamic) {}
+    }
+
     static function findDestination(item:Dynamic):{ index:Int, count:Dynamic } {
         var bankContent = getContent(bankInventory);
         if (bankContent != null) {
@@ -2355,6 +2465,21 @@ class ItemUtilitiesMod {
         recyclerTransferPosition = 0;
     }
 
+    static function cancelLockedSort(notifyFailure:Bool):Void {
+        var callback = lockedSortCallback;
+        lockedSortActive = false;
+        lockedSortInventory = null;
+        lockedSortDesiredItems = [];
+        lockedSortTargetIndexes = [];
+        lockedSortFixedIndexes = [];
+        lockedSortPosition = 0;
+        lockedSortCallback = null;
+        lockedSortSucceeded = true;
+        lockedSortWaiting = false;
+        if (notifyFailure && callback != null)
+            try Reflect.callMethod(null, callback, [false]) catch (_:Dynamic) {}
+    }
+
     static function checkPresetHotkeys():Void {
         if (presetTransferActive)
             return;
@@ -2400,6 +2525,8 @@ class ItemUtilitiesMod {
             }
             if (!enabled.get() || !showLockVisuals.get())
                 lockEditMode = false;
+            if (!enabled.get() || !sortingIgnoresLockedItems.get())
+                cancelLockedSort(false);
             syncDepositButtonVisibility();
         } catch (_:Dynamic) {}
     }
