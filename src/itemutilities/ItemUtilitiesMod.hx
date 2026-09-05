@@ -205,18 +205,20 @@ class ItemUtilitiesMod {
     }
 
     @:hlx.postfix(ui.win.InventorySlot.checkItemChanged)
-    static function afterInventorySlotChanged(instance:Dynamic, force:hl.Ref<Bool>, result:Bool):Void {
+    static function afterInventorySlotChanged(instance:Dynamic, force:hl.Ref<Bool>, result:Bool):Bool {
         registerSlot(instance);
+        return result;
     }
 
     @:hlx.postfix(ui.BaseUI.setTip)
     static function afterTooltipSet(instance:Dynamic, element:Dynamic, anchor:Dynamic,
-        position:Dynamic, nesting:Dynamic, result:Dynamic):Void {
+        position:Dynamic, nesting:Dynamic, result:Dynamic):Dynamic {
         activeBaseUI = instance;
         if (result != null) {
             activeTooltip = result;
             activeTooltipShownAt = haxe.Timer.stamp();
         }
+        return result;
     }
 
     @:hlx.postfix(ui.BaseUI.displayWindow)
