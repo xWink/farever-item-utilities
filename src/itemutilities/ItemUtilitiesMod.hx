@@ -112,6 +112,8 @@ class ItemUtilitiesMod {
     static var visibleSlots:Array<Dynamic> = [];
     static var lockEditMode:Bool = false;
     static var lockRecords:Array<Dynamic> = [];
+    static var fingerprintCache:Map<String, String> = new Map();
+    static var nextLockReconcileAt:Float = 0;
     static var weaponPresets:Array<Dynamic> = [];
     static var selectedWeaponPresets:Array<Dynamic> = [];
     static var selectedWeaponPreset:Int = 0;
@@ -132,6 +134,7 @@ class ItemUtilitiesMod {
     static inline var TOOLTIP_OVERLAP_INSET = 4.0;
     static inline var PRESET_CONTROLS_WIDTH = 254.0;
     static inline var ITEM_FINGERPRINT_VERSION = "v2|";
+    static inline var LOCK_RECONCILE_INTERVAL = 0.1;
     static inline var DEPOSIT_CRAFTING = 0;
     static inline var DEPOSIT_ALL = 1;
     static inline var DEPOSIT_FOOD = 2;
@@ -202,6 +205,8 @@ class ItemUtilitiesMod {
         // InventoryUI is recreated when changing characters. Do not retain the
         // previous hero while the new character's windows are being built.
         activeHero = null;
+        fingerprintCache = new Map();
+        nextLockReconcileAt = 0;
         activeInventoryUI = instance;
         var comp = fieldOrNull(instance, "inventoryComp");
         var inventory = fieldOrNull(comp, "inventory");
@@ -484,7 +489,11 @@ class ItemUtilitiesMod {
             syncSelectedWeaponPreset();
             selectPlayerInventoryComp();
             checkPresetHotkeys();
-            reconcileItemLocks();
+            var now = haxe.Timer.stamp();
+            if (now >= nextLockReconcileAt) {
+                nextLockReconcileAt = now + LOCK_RECONCILE_INTERVAL;
+                reconcileItemLocks();
+            }
             drawWeaponPresetButtons();
             if (showLockVisuals.get()) {
                 drawLockHeaderButton();
@@ -2008,6 +2017,10 @@ class ItemUtilitiesMod {
         var tracked = current.get(uid);
         if (tracked == null || tracked.characterId == null)
             return;
+        // The item was explicitly interacted with, so refresh its cache even
+        // if its UID survived an upgrade or augmentation.
+        tracked.fingerprint = fingerprint;
+        fingerprintCache.set(uid, fingerprint);
         lockRecords.push({
             uid: uid,
             fingerprint: fingerprint,
@@ -2092,6 +2105,13 @@ class ItemUtilitiesMod {
             if (exact != null && recordAppliesToTrackedItem(record, exact)
                 && (Reflect.field(record, "restored") == true
                     || isSavedSlot(record, exact))) {
+                // Only confirmed locked items need a live refresh. All other
+                // inventory entries use the UID cache populated below.
+                var liveFingerprint = itemFingerprint(exact.item);
+                if (liveFingerprint != null) {
+                    exact.fingerprint = liveFingerprint;
+                    fingerprintCache.set(uid, liveFingerprint);
+                }
                 record.missing = 0;
                 record.restored = true;
                 // A split creates another item with the same fingerprint but
@@ -2250,10 +2270,16 @@ class ItemUtilitiesMod {
             for (index in 0...arrayLength(content)) {
                 var item = itemAt(inventory, index);
                 var uid = itemUid(item);
-                var fingerprint = itemFingerprint(item);
+                var fingerprint = uid == null ? null : fingerprintCache.get(uid);
+                if (uid != null && fingerprint == null) {
+                    fingerprint = itemFingerprint(item);
+                    if (fingerprint != null)
+                        fingerprintCache.set(uid, fingerprint);
+                }
                 if (uid != null && fingerprint != null)
                     result.set(uid, { uid: uid, fingerprint: fingerprint,
-                        kind: Std.string(fieldOrNull(item, "kind")), inventory: inventory,
+                        kind: Std.string(fieldOrNull(item, "kind")), item: item,
+                        inventory: inventory,
                         location: entry.location, index: index,
                         characterId: entry.characterId });
             }
